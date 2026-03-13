@@ -1,0 +1,21 @@
+{
+    "name": "kanopi/wp-core-installer",
+    "description": "A Composer plugin that safely installs WordPress core files without overwriting project files, and manages .gitignore for all Composer-managed WordPress packages.",
+    "type": "composer-plugin",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.0",
+        "composer-plugin-api": "^2.0"
+    },
+    "require-dev": {
+        "composer/composer": "^2.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kanopi\\Composer\\WordPress\\": "src/"
+        }
+    },
+    "extra": {
+        "class": "Kanopi\\Composer\\WordPress\\Plugin"
+    }
+}
