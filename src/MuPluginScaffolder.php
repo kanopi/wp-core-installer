@@ -169,14 +169,17 @@ class MuPluginScaffolder
      */
     private function resolveMuPluginsDir(string $projectRoot): string
     {
-        $extra  = $this->composer->getPackage()->getExtra();
+        $extra = $this->composer->getPackage()->getExtra();
+        $userInstallDir = $extra['wordpress-install-dir'] ?? '';
         $rawDir = $extra['wp-core-installer']['mu-plugins-dir'] ?? self::DEFAULT_MU_PLUGINS_DIR;
 
         if (str_starts_with($rawDir, '/')) {
             return $rawDir;
         }
 
-        return $projectRoot . DIRECTORY_SEPARATOR . $rawDir;
+        $parts = array_filter([$projectRoot, $userInstallDir, $rawDir]);
+
+        return implode(DIRECTORY_SEPARATOR, $parts);
     }
 
     /**
