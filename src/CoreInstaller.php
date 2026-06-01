@@ -48,6 +48,8 @@ use React\Promise\PromiseInterface;
  */
 class CoreInstaller extends LibraryInstaller
 {
+    use GitignoreOption;
+
     /**
      * Paths (relative to the web-root) this installer will NEVER copy to or
      * overwrite. Directory names cause the entire subtree to be skipped.
@@ -294,12 +296,19 @@ class CoreInstaller extends LibraryInstaller
         );
 
         // ── Refresh .gitignore core block ─────────────────────────────────────
-        $this->gitignoreManager->updateCoreBlock(
-            $projectRoot,
-            $webRoot,
-            $deployed,
-            $this->vendorDir
-        );
+        // When .gitignore management is disabled, remove any block we wrote on
+        // a previous run so it never lingers and strips files from a build
+        // artifact (e.g. Pantheon's terminus build:env:push).
+        if ($this->isGitignoreManaged($this->composer)) {
+            $this->gitignoreManager->updateCoreBlock(
+                $projectRoot,
+                $webRoot,
+                $deployed,
+                $this->vendorDir
+            );
+        } else {
+            $this->gitignoreManager->removeCoreBlock($projectRoot);
+        }
     }
 
     // -------------------------------------------------------------------------

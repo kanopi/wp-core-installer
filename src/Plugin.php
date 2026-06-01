@@ -23,6 +23,8 @@ use Composer\Script\ScriptEvents;
  */
 class Plugin implements PluginInterface, EventSubscriberInterface
 {
+    use GitignoreOption;
+
     private Composer $composer;
     private IOInterface $io;
 
@@ -75,6 +77,19 @@ class Plugin implements PluginInterface, EventSubscriberInterface
         (new MuPluginScaffolder($this->composer, $this->io))->scaffold();
 
         // ── 2. .gitignore packages block ──────────────────────────────────────
+        if (!$this->isGitignoreManaged($this->composer)) {
+            // Management is disabled (e.g. a build-artifact deploy where
+            // .gitignore would strip committed files). Remove any packages
+            // block we wrote previously so it never lingers.
+            $this->io->write(
+                '<info>WP Core Installer:</info> Skipping .gitignore management (manage-gitignore is false).'
+            );
+
+            (new GitignoreManager($this->io))->removePackagesBlock((string) getcwd());
+
+            return;
+        }
+
         $this->io->write('<info>WP Core Installer:</info> Refreshing .gitignore for Composer-managed packages…');
 
         (new PackageGitignoreHandler(

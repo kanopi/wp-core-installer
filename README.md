@@ -79,6 +79,39 @@ Paths that are copied on **first** install only, never overwritten on update.
 The built-in list covers `.htaccess`, `wp-config-sample.php`, and the
 silence-is-golden `wp-content/index.php` stubs.
 
+### `wp-core-installer.manage-gitignore`
+
+| Type | Default | Description |
+|------|---------|-------------|
+| bool | `true`  | Set to `false` to disable **all** automatic `.gitignore` writes (both the `core` and `packages` blocks). |
+
+Leave this at its default for the standard Composer-site workflow, where
+WordPress core and Composer-managed plugins/themes should never be committed.
+
+Set it to `false` when your CI/CD pipeline uses `.gitignore` to decide what
+goes **into** a build artifact rather than what stays out of your source repo —
+for example Pantheon's `terminus build:env:push`, which runs
+`composer install --no-dev` to assemble a complete artifact (core, plugins,
+everything) and then commits it to Pantheon's git remote. If the managed blocks
+gitignored core and plugins, those files would be stripped from the artifact and
+the deploy would fail with "No site detected."
+
+```json
+{
+    "extra": {
+        "wordpress-install-dir": "web",
+        "wp-core-installer": {
+            "manage-gitignore": false
+        }
+    }
+}
+```
+
+When disabled, the plugin actively **removes** any `core` / `packages` blocks it
+previously wrote (so flipping the flag is self-cleaning), and your project
+becomes responsible for managing `.gitignore` — either committing core/vendor
+into the artifact or ignoring them by your own means.
+
 ---
 
 ## Three-tier protection model
