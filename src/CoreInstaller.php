@@ -103,9 +103,6 @@ class CoreInstaller extends LibraryInstaller
 
     private GitignoreManager $gitignoreManager;
 
-    /** Prevents redundant deployment when install()/update() already ran. */
-    private bool $deployedThisRun = false;
-
     public function __construct(
         IOInterface $io,
         Composer $composer,
@@ -206,31 +203,87 @@ class CoreInstaller extends LibraryInstaller
      * Called from the post-install/update event to guarantee core files are
      * present in the web-root even when Composer considered the package
      * already installed (vendor cache hit) and skipped install()/update().
+     *
+     * Instead of tracking an in-memory flag, this method checks the actual
+     * web-root for a sentinel file (wp-includes/version.php). This handles
+     * every edge case: vendor cache hits, patched plugin reloads, and
+     * scenarios where core files were manually deleted.
      */
     public function ensureCoreDeployed(): void
     {
-        if ($this->deployedThisRun) {
+        $projectRoot = (string) getcwd();
+        $webRoot     = $this->resolveWebRoot($projectRoot);
+
+        // If the web-root already has core files, nothing to do.
+        $sentinel = $webRoot . DIRECTORY_SEPARATOR . 'wp-includes' . DIRECTORY_SEPARATOR . 'version.php';
+        if (file_exists($sentinel)) {
+            $this->io->write(
+                '  - Core files already present in web-root.',
+                true,
+                IOInterface::VERBOSE
+            );
             return;
         }
 
-        $localRepo = $this->composer->getRepositoryManager()->getLocalRepository();
+        // Find a wordpress-core package — try the local repo first, then the lock file.
+        $package = $this->findWordPressCorePackage();
 
-        foreach ($localRepo->getPackages() as $package) {
-            if ($package->getType() !== 'wordpress-core') {
-                continue;
-            }
-
-            $stagingPath = $this->getInstallPath($package);
-
-            if (!is_dir($stagingPath)) {
-                continue;
-            }
-
+        if ($package === null) {
             $this->io->write(
-                sprintf('<info>WP Core Installer:</info> Ensuring %s is deployed to web-root…', $package->getPrettyName())
+                '  - No wordpress-core package found; skipping deployment.',
+                true,
+                IOInterface::VERBOSE
             );
-            $this->deployToWebRoot($package);
+            return;
         }
+
+        $stagingPath = $this->getInstallPath($package);
+
+        if (!is_dir($stagingPath)) {
+            $this->io->write(
+                sprintf(
+                    '  - Staging directory not found at <comment>%s</comment>; skipping deployment.',
+                    $stagingPath
+                ),
+                true,
+                IOInterface::VERBOSE
+            );
+            return;
+        }
+
+        $this->io->write(
+            sprintf('<info>WP Core Installer:</info> Ensuring %s is deployed to web-root…', $package->getPrettyName())
+        );
+        $this->deployToWebRoot($package);
+    }
+
+    /**
+     * Search the local installed repository and (as fallback) the lock file
+     * for a package of type "wordpress-core".
+     */
+    private function findWordPressCorePackage(): ?PackageInterface
+    {
+        // 1. Check the local installed repository.
+        $localRepo = $this->composer->getRepositoryManager()->getLocalRepository();
+        foreach ($localRepo->getPackages() as $package) {
+            if ($package->getType() === 'wordpress-core') {
+                return $package;
+            }
+        }
+
+        // 2. Fall back to the lock file — covers scenarios where the local
+        //    repo hasn't been fully populated yet (e.g. plugin loaded via
+        //    patch before the full install completes).
+        $locker = $this->composer->getLocker();
+        if ($locker->isLocked()) {
+            foreach ($locker->getLockedRepository(true)->getPackages() as $package) {
+                if ($package->getType() === 'wordpress-core') {
+                    return $package;
+                }
+            }
+        }
+
+        return null;
     }
 
     // -------------------------------------------------------------------------
@@ -243,8 +296,6 @@ class CoreInstaller extends LibraryInstaller
      */
     private function deployToWebRoot(PackageInterface $package): void
     {
-        $this->deployedThisRun = true;
-
         $stagingPath = realpath($this->getInstallPath($package));
 
         if ($stagingPath === false || !is_dir($stagingPath)) {
