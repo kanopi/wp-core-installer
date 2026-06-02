@@ -103,6 +103,9 @@ class CoreInstaller extends LibraryInstaller
 
     private GitignoreManager $gitignoreManager;
 
+    /** Prevents redundant deployment when install()/update() already ran. */
+    private bool $deployedThisRun = false;
+
     public function __construct(
         IOInterface $io,
         Composer $composer,
@@ -196,6 +199,41 @@ class CoreInstaller extends LibraryInstaller
     }
 
     // -------------------------------------------------------------------------
+    // Post-event deployment (handles the vendor-cache scenario)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Called from the post-install/update event to guarantee core files are
+     * present in the web-root even when Composer considered the package
+     * already installed (vendor cache hit) and skipped install()/update().
+     */
+    public function ensureCoreDeployed(): void
+    {
+        if ($this->deployedThisRun) {
+            return;
+        }
+
+        $localRepo = $this->composer->getRepositoryManager()->getLocalRepository();
+
+        foreach ($localRepo->getPackages() as $package) {
+            if ($package->getType() !== 'wordpress-core') {
+                continue;
+            }
+
+            $stagingPath = $this->getInstallPath($package);
+
+            if (!is_dir($stagingPath)) {
+                continue;
+            }
+
+            $this->io->write(
+                sprintf('<info>WP Core Installer:</info> Ensuring %s is deployed to web-root…', $package->getPrettyName())
+            );
+            $this->deployToWebRoot($package);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Core deployment logic
     // -------------------------------------------------------------------------
 
@@ -205,6 +243,8 @@ class CoreInstaller extends LibraryInstaller
      */
     private function deployToWebRoot(PackageInterface $package): void
     {
+        $this->deployedThisRun = true;
+
         $stagingPath = realpath($this->getInstallPath($package));
 
         if ($stagingPath === false || !is_dir($stagingPath)) {

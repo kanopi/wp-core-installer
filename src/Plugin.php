@@ -25,6 +25,7 @@ class Plugin implements PluginInterface, EventSubscriberInterface
 {
     private Composer $composer;
     private IOInterface $io;
+    private CoreInstaller $coreInstaller;
 
     // -------------------------------------------------------------------------
     // PluginInterface
@@ -35,9 +36,8 @@ class Plugin implements PluginInterface, EventSubscriberInterface
         $this->composer = $composer;
         $this->io       = $io;
 
-        $composer->getInstallationManager()->addInstaller(
-            new CoreInstaller($io, $composer)
-        );
+        $this->coreInstaller = new CoreInstaller($io, $composer);
+        $composer->getInstallationManager()->addInstaller($this->coreInstaller);
     }
 
     public function deactivate(Composer $composer, IOInterface $io): void
@@ -69,6 +69,9 @@ class Plugin implements PluginInterface, EventSubscriberInterface
      */
     public function onPostInstallOrUpdate(Event $event): void
     {
+        // ── 0. Ensure core is deployed (handles vendor-cache scenario) ───────
+        $this->coreInstaller->ensureCoreDeployed();
+
         // ── 1. Autoloader mu-plugin ───────────────────────────────────────────
         $this->io->write('<info>WP Core Installer:</info> Checking Composer autoloader mu-plugin…');
 
