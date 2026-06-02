@@ -204,35 +204,18 @@ class CoreInstaller extends LibraryInstaller
      * present in the web-root even when Composer considered the package
      * already installed (vendor cache hit) and skipped install()/update().
      *
-     * Instead of tracking an in-memory flag, this method checks the actual
-     * web-root for a sentinel file (wp-includes/version.php). This handles
-     * every edge case: vendor cache hits, patched plugin reloads, and
-     * scenarios where core files were manually deleted.
+     * Searches the local installed repository and the lock file for a
+     * wordpress-core package, then deploys from the staging directory if
+     * it exists.
      */
     public function ensureCoreDeployed(): void
     {
-        $projectRoot = (string) getcwd();
-        $webRoot     = $this->resolveWebRoot($projectRoot);
-
-        // If the web-root already has core files, nothing to do.
-        $sentinel = $webRoot . DIRECTORY_SEPARATOR . 'wp-includes' . DIRECTORY_SEPARATOR . 'version.php';
-        if (file_exists($sentinel)) {
-            $this->io->write(
-                '  - Core files already present in web-root.',
-                true,
-                IOInterface::VERBOSE
-            );
-            return;
-        }
-
         // Find a wordpress-core package — try the local repo first, then the lock file.
         $package = $this->findWordPressCorePackage();
 
         if ($package === null) {
             $this->io->write(
-                '  - No wordpress-core package found; skipping deployment.',
-                true,
-                IOInterface::VERBOSE
+                '<info>WP Core Installer:</info> No wordpress-core package found; skipping deployment.'
             );
             return;
         }
@@ -242,11 +225,9 @@ class CoreInstaller extends LibraryInstaller
         if (!is_dir($stagingPath)) {
             $this->io->write(
                 sprintf(
-                    '  - Staging directory not found at <comment>%s</comment>; skipping deployment.',
+                    '<info>WP Core Installer:</info> Staging directory not found at <comment>%s</comment>; skipping deployment.',
                     $stagingPath
-                ),
-                true,
-                IOInterface::VERBOSE
+                )
             );
             return;
         }
