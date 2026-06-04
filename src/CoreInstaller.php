@@ -144,7 +144,7 @@ class CoreInstaller extends LibraryInstaller
             $this->io->write(
                 sprintf('<info>WP Core Installer:</info> Deploying %s to web-root…', $package->getPrettyName())
             );
-            $this->deployToWebRoot($package);
+            $this->deployToWebRoot($package, $this->getInstallPath($package));
         };
 
         if ($promise instanceof PromiseInterface) {
@@ -167,7 +167,7 @@ class CoreInstaller extends LibraryInstaller
             $this->io->write(
                 sprintf('<info>WP Core Installer:</info> Re-deploying %s to web-root…', $target->getPrettyName())
             );
-            $this->deployToWebRoot($target);
+            $this->deployToWebRoot($target, $this->getInstallPath($target));
         };
 
         if ($promise instanceof PromiseInterface) {
@@ -202,7 +202,9 @@ class CoreInstaller extends LibraryInstaller
     /**
      * Called from the post-install/update event to guarantee core files are
      * present in the web-root even when Composer considered the package
-     * already installed (vendor cache hit) and skipped install()/update().
+     * already installed (vendor cache hit) and skipped install()/update(),
+     * OR when this plugin was required AFTER core was already installed by
+     * the default installer (the `composer require` scenario).
      *
      * Always deploys core files to the web-root regardless of current state.
      */
@@ -220,13 +222,13 @@ class CoreInstaller extends LibraryInstaller
             return;
         }
 
-        $stagingPath = $this->getInstallPath($package);
+        $source = $this->locateCoreSource($package);
 
-        if (!is_dir($stagingPath)) {
+        if ($source === null) {
             $this->io->write(
                 sprintf(
-                    '  - Staging directory not found at <comment>%s</comment>; skipping deployment.',
-                    $stagingPath
+                    '  - Core source directory not found for <comment>%s</comment>; skipping deployment.',
+                    $package->getPrettyName()
                 ),
                 true,
                 IOInterface::VERBOSE
@@ -237,7 +239,30 @@ class CoreInstaller extends LibraryInstaller
         $this->io->write(
             sprintf('<info>WP Core Installer:</info> Ensuring %s is deployed to web-root…', $package->getPrettyName())
         );
-        $this->deployToWebRoot($package);
+        $this->deployToWebRoot($package, $source);
+    }
+
+    /**
+     * Resolve the on-disk directory that currently holds the core package's
+     * files. Normally this is our private staging directory, but when the
+     * plugin was required AFTER core (e.g. `composer require kanopi/wp-core-installer`
+     * into an existing project), core was placed by the default installer at
+     * its conventional vendor path instead — so fall back to that.
+     */
+    private function locateCoreSource(PackageInterface $package): ?string
+    {
+        $candidates = [
+            $this->getInstallPath($package),              // vendor/.wordpress-core-staging/<name>
+            $this->vendorDir . '/' . $package->getName(), // vendor/<name> (default installer)
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_dir($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -274,19 +299,23 @@ class CoreInstaller extends LibraryInstaller
     // -------------------------------------------------------------------------
 
     /**
-     * Copy WordPress core files from the staging directory to the web-root,
+     * Copy WordPress core files from the given source directory to the web-root,
      * honouring all three protection tiers, then refresh the "core" .gitignore block.
+     *
+     * @param string $sourceDir Directory holding the extracted core files
+     *                          (normally the staging dir, but may be the
+     *                          default vendor path — see locateCoreSource()).
      */
-    private function deployToWebRoot(PackageInterface $package): void
+    private function deployToWebRoot(PackageInterface $package, string $sourceDir): void
     {
-        $stagingPath = realpath($this->getInstallPath($package));
+        $stagingPath = realpath($sourceDir);
 
         if ($stagingPath === false || !is_dir($stagingPath)) {
             throw new \RuntimeException(
                 sprintf(
-                    'WP Core Installer: staging directory not found at "%s". '
+                    'WP Core Installer: core source directory not found at "%s". '
                     . 'The package may not have been extracted correctly.',
-                    $this->getInstallPath($package)
+                    $sourceDir
                 )
             );
         }

@@ -391,7 +391,9 @@ class GitignoreManager
 
     private function stripBlock(string $content, string $blockId): string
     {
-        $inner   = substr($this->blockPattern($blockId), 1, -1);
+        // blockPattern() returns a fully delimited "/…/s" regex; strip the
+        // leading "/" and the trailing "/s" (2 chars) to reuse the inner body.
+        $inner   = substr($this->blockPattern($blockId), 1, -2);
         $pattern = '/\n?' . $inner . '\n?/s';
 
         return (string) preg_replace($pattern, "\n", $content);
