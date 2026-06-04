@@ -20,6 +20,12 @@
             "Kanopi\\Composer\\WordPress\\": "src/"
         }
     },
+    "scripts": {
+        "test": "bats tests/integration/"
+    },
+    "scripts-descriptions": {
+        "test": "Run the bats integration suite (requires bats-core and the composer binary on PATH)."
+    },
     "extra": {
         "class": "Kanopi\\Composer\\WordPress\\Plugin"
     }

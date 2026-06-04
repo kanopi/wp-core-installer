@@ -1,0 +1,43 @@
+version: 2.1
+
+# Integration tests for kanopi/wp-core-installer.
+#
+# The suite (tests/integration/*.bats) drives the real composer binary against
+# fixture path packages and asserts on the resulting web-root. It runs on a
+# matrix of supported PHP versions (composer.json requires php >=8.1).
+
+jobs:
+  integration:
+    parameters:
+      php-version:
+        type: string
+    docker:
+      - image: cimg/php:<< parameters.php-version >>
+    steps:
+      - checkout
+      - run:
+          name: Versions
+          command: |
+            php --version
+            composer --version
+      - run:
+          name: Validate composer.json
+          command: composer validate --strict
+      - run:
+          name: Install bats-core
+          command: |
+            git clone --depth 1 --branch v1.11.0 \
+              https://github.com/bats-core/bats-core.git /tmp/bats-core
+            sudo /tmp/bats-core/install.sh /usr/local
+            bats --version
+      - run:
+          name: Run integration tests
+          command: bats --print-output-on-failure --timing tests/integration/
+
+workflows:
+  test:
+    jobs:
+      - integration:
+          matrix:
+            parameters:
+              php-version: ["8.1", "8.2", "8.3", "8.4", "8.5"]
