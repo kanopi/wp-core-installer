@@ -82,6 +82,28 @@ setup() {
   grep -q "wp-admin" "${PROJ}/.gitignore"
 }
 
+# Scenario 5b — regression for issue #5.
+# When wordpress-install-dir is ".", resolveMuPluginsDir() must not leak a
+# literal "/./" segment into the generated autoloader or the .gitignore.
+@test "install-dir '.' produces clean mu-plugin path and gitignore entry" {
+  set_install_dir "."
+
+  run composer_in_project require "kanopi/wp-core-installer:*" "fake/wordpress-core:*"
+  [ "$status" -eq 0 ]
+
+  # The managed mu-plugin is written under the (project-root) web root.
+  autoloader="${PROJ}/wp-content/mu-plugins/000-autoloader.php"
+  [ -f "$autoloader" ]
+
+  # No stray "/./" segment and no over-climbing "../../../" in the require path.
+  ! grep -q '/\./' "$autoloader"
+  ! grep -q '\.\./\.\./\.\.' "$autoloader"
+
+  # .gitignore must not gain the malformed duplicate "/./..." line.
+  [ -f "${PROJ}/.gitignore" ]
+  ! grep -q '/\./' "${PROJ}/.gitignore"
+}
+
 # Scenario 6 — regression for the stripBlock preg_replace crash.
 # Reinstalling core runs the uninstall path; it must not error.
 @test "reinstalling core does not crash and redeploys" {
