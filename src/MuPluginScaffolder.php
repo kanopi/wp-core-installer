@@ -173,6 +173,13 @@ class MuPluginScaffolder
         $userInstallDir = $extra['wordpress-install-dir'] ?? '';
         $rawDir = $extra['wp-core-installer']['mu-plugins-dir'] ?? self::DEFAULT_MU_PLUGINS_DIR;
 
+        // "." means the web root IS the project root (a documented config value).
+        // Treat it as empty so it doesn't survive array_filter() below and pollute
+        // the path with a literal "/./" segment. Mirrors CoreInstaller::resolveWebRoot().
+        if ($userInstallDir === '.') {
+            $userInstallDir = '';
+        }
+
         if (str_starts_with($rawDir, '/')) {
             return $rawDir;
         }

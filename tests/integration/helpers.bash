@@ -61,3 +61,12 @@ EOF
 composer_in_project() {
   ( cd "${PROJ}" && "${COMPOSER}" "$@" )
 }
+
+# Override extra.wordpress-install-dir in the project's composer.json.
+# Used to exercise the "." (web root == project root) configuration.
+set_install_dir() {
+  local dir="$1"
+  sed -i.bak "s#\"wordpress-install-dir\": \"web\"#\"wordpress-install-dir\": \"${dir}\"#" \
+    "${PROJ}/composer.json"
+  rm -f "${PROJ}/composer.json.bak"
+}
