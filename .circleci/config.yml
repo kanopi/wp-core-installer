@@ -1,34 +1,65 @@
 version: 2.1
 
-# Integration tests for kanopi/wp-core-installer.
+# CI for kanopi/wp-core-installer.
 #
-# The suite (tests/integration/*.bats) drives the real composer binary against
-# fixture path packages and asserts on the resulting web-root. It runs on a
-# matrix of supported PHP versions (composer.json requires php >=8.0).
-# Run `composer install` in this repo first: the fixtures install
-# composer/installers from vendor/ as an offline path repository.
+# quality:   coding standards (PHPCS, PSR-12) and static analysis (PHPStan).
+# test:      PHPUnit unit tests plus the bats integration suite, on every
+#            supported PHP version (composer.json requires php >=8.0).
+#
+# The integration suite drives the real composer binary against fixture path
+# packages; it installs composer/installers from this repo's vendor/ as an
+# offline path repository, so `composer install` must run first.
 
-jobs:
-  integration:
+executors:
+  php:
     parameters:
       php-version:
         type: string
+        default: "8.3"
     docker:
       - image: cimg/php:<< parameters.php-version >>
+
+commands:
+  install-deps:
     steps:
-      - checkout
       - run:
           name: Versions
           command: |
             php --version
             composer --version
       - run:
+          name: Install dev dependencies
+          command: composer install --no-interaction --no-progress
+
+jobs:
+  quality:
+    executor: php
+    steps:
+      - checkout
+      - run:
           name: Validate composer.json
           command: composer validate --strict
+      - install-deps
       - run:
-          name: Install dev dependencies
-          # tests use vendor/composer/installers as an offline path repo
-          command: composer install --no-interaction --no-progress
+          name: Coding standards (PHPCS)
+          command: composer lint
+      - run:
+          name: Static analysis (PHPStan)
+          command: composer analyse
+
+  test:
+    parameters:
+      php-version:
+        type: string
+    executor:
+      name: php
+      php-version: << parameters.php-version >>
+    steps:
+      - checkout
+      - install-deps
+      - run:
+          name: Unit tests (PHPUnit)
+          command: composer test:unit
       - run:
           name: Install bats-core
           command: |
@@ -37,13 +68,14 @@ jobs:
             sudo /tmp/bats-core/install.sh /usr/local
             bats --version
       - run:
-          name: Run integration tests
+          name: Integration tests (bats)
           command: bats --print-output-on-failure --timing tests/integration/
 
 workflows:
-  test:
+  ci:
     jobs:
-      - integration:
+      - quality
+      - test:
           matrix:
             parameters:
               php-version: ["8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]

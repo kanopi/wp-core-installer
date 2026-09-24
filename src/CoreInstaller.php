@@ -254,7 +254,10 @@ class CoreInstaller extends LibraryInstaller
 
         if ($previous !== null && $previous->describesSameDeployAs($expected) && $previous->isIntact()) {
             $this->io->write(
-                sprintf('<info>WP Core Installer:</info> %s is up to date in the web-root; skipping deploy.', $package->getPrettyName())
+                sprintf(
+                    '<info>WP Core Installer:</info> %s is up to date in the web-root; skipping deploy.',
+                    $package->getPrettyName()
+                )
             );
             // Still refresh the core block so .gitignore settings take effect.
             $this->gitignoreManager->updateCoreBlock(
@@ -312,8 +315,8 @@ class CoreInstaller extends LibraryInstaller
         // 2. Fall back to the lock file — covers scenarios where the local
         //    repo hasn't been fully populated yet (e.g. plugin loaded via
         //    patch before the full install completes).
-        $locker = $this->composer->getLocker();
-        if ($locker->isLocked()) {
+        $locker = $this->composer instanceof Composer ? $this->composer->getLocker() : null;
+        if ($locker !== null && $locker->isLocked()) {
             foreach ($locker->getLockedRepository(true)->getPackages() as $package) {
                 if ($package->getType() === 'wordpress-core') {
                     return $package;
@@ -581,7 +584,7 @@ class CoreInstaller extends LibraryInstaller
     /** @return string[] */
     private function buildProtectedList(): array
     {
-        $userExtra = (array) ($this->paths->pluginConfig()['protected-paths'] ?? []);
+        $userExtra = $this->paths->configStringList('protected-paths');
 
         return array_values(
             array_unique(
@@ -596,7 +599,7 @@ class CoreInstaller extends LibraryInstaller
     /** @return string[] */
     private function buildSkipIfExistsList(): array
     {
-        $userExtra = (array) ($this->paths->pluginConfig()['skip-if-exists'] ?? []);
+        $userExtra = $this->paths->configStringList('skip-if-exists');
 
         return array_values(
             array_unique(
@@ -630,6 +633,7 @@ class CoreInstaller extends LibraryInstaller
     // Helpers: filesystem iteration
     // -------------------------------------------------------------------------
 
+    /** @return \RecursiveIteratorIterator<\RecursiveDirectoryIterator> */
     private function createIterator(string $baseDir): \RecursiveIteratorIterator
     {
         return new \RecursiveIteratorIterator(

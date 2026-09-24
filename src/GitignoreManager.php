@@ -65,7 +65,7 @@ class GitignoreManager
     ];
 
     /**
-     * @param array<string, mixed> $pluginConfig The root package's extra.wp-core-installer array.
+     * @param array<mixed> $pluginConfig The root package's extra.wp-core-installer array.
      */
     public function __construct(
         private IOInterface $io,
