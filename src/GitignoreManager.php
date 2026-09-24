@@ -339,7 +339,7 @@ class GitignoreManager
      */
     private function writeBlock(string $projectRoot, string $blockId, array $contentLines): void
     {
-        $path    = $projectRoot . DIRECTORY_SEPARATOR . '.gitignore';
+        $path    = $projectRoot . '/.gitignore';
         $current = $this->read($path);
         $block   = $this->renderBlock($blockId, $contentLines);
         $updated = $this->replaceOrAppend($current, $blockId, $block);
@@ -370,7 +370,7 @@ class GitignoreManager
 
     private function removeBlock(string $projectRoot, string $blockId): void
     {
-        $path = $projectRoot . DIRECTORY_SEPARATOR . '.gitignore';
+        $path = $projectRoot . '/.gitignore';
 
         if (!file_exists($path)) {
             return;
@@ -433,24 +433,50 @@ class GitignoreManager
     {
         $pattern = $this->blockPattern($blockId);
 
-        if (preg_match($pattern, $existing)) {
-            return (string) preg_replace($pattern, $newBlock, $existing);
+        if (preg_match($pattern, $existing) === 1) {
+            // A callback, not a replacement string, so nothing in the block
+            // can be read as a "$1" / "\1" back-reference.
+            return (string) preg_replace_callback($pattern, static fn (): string => $newBlock, $existing, 1);
         }
 
-        // No existing block — append with one blank line of separation.
-        $separator = (strlen(trim($existing)) > 0 && !str_ends_with($existing, "\n\n")) ? "\n" : '';
+        // No existing block: append after exactly one blank line, keeping
+        // the line ending the file's last line already used.
+        $content = (string) preg_replace('/(?:\r?\n)+\z/', '', $existing);
 
-        return $existing . $separator . "\n" . $newBlock . "\n";
+        if (trim($content) === '') {
+            return $newBlock . "\n";
+        }
+
+        $eol = preg_match('/\r\n\z/', $existing) === 1 ? "\r\n" : "\n";
+
+        return $content . $eol . "\n" . $newBlock . "\n";
     }
 
+    /**
+     * Remove a block together with the blank-line separators around it, so
+     * the content either side is left one blank line apart (or the file
+     * simply ends where the block began).
+     */
     private function stripBlock(string $content, string $blockId): string
     {
-        // blockPattern() returns a fully delimited "/…/s" regex; strip the
-        // leading "/" and the trailing "/s" (2 chars) to reuse the inner body.
-        $inner   = substr($this->blockPattern($blockId), 1, -2);
-        $pattern = '/\n?' . $inner . '\n?/s';
+        if (preg_match($this->blockPattern($blockId), $content, $match, PREG_OFFSET_CAPTURE) !== 1) {
+            return $content;
+        }
 
-        return (string) preg_replace($pattern, "\n", $content);
+        [$block, $offset] = $match[0];
+
+        $before = (string) preg_replace('/(?:\r?\n)+\z/', '', substr($content, 0, $offset));
+        $after  = (string) preg_replace('/\A(?:\r?\n)+/', '', substr($content, $offset + strlen($block)));
+
+        if (trim($before) === '') {
+            return $after;
+        }
+
+        if (trim($after) === '') {
+            return $before . "\n";
+        }
+
+        return $before . "\n\n" . $after;
     }
 
     private function blockPattern(string $blockId): string

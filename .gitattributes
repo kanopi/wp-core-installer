@@ -1,0 +1,3 @@
+# Keep LF everywhere: bats/bash scripts break with CRLF, and Windows
+# checkouts would otherwise convert them.
+* text=auto eol=lf

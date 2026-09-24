@@ -270,7 +270,7 @@ class MuPluginScaffolder
      */
     private function loadStub(): string
     {
-        $stubPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'resources' . DIRECTORY_SEPARATOR . 'autoloader.php';
+        $stubPath = dirname(__DIR__) . '/resources/autoloader.php';
 
         if (!is_file($stubPath)) {
             throw new \RuntimeException(
