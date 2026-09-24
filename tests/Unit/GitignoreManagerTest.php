@@ -228,6 +228,84 @@ final class GitignoreManagerTest extends TestCase
         self::assertFileDoesNotExist($this->root . '/.gitignore');
     }
 
+    /**
+     * Regression for #38: one blank line between existing content and each
+     * appended block, and exactly one trailing newline.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function existingContentProvider(): array
+    {
+        return [
+            'one trailing newline'   => ["/.env\n"],
+            'no trailing newline'    => ['/.env'],
+            'extra blank lines'      => ["/.env\n\n\n"],
+        ];
+    }
+
+    /**
+     * @dataProvider existingContentProvider
+     */
+    public function testBlocksAreSeparatedByExactlyOneBlankLine(string $existing): void
+    {
+        $this->write('.gitignore', $existing);
+        $manager = $this->manager();
+
+        $this->writeCore($manager, ['wp-load.php']);
+        $manager->updatePackagesBlock($this->root, $this->root . '/vendor', []);
+
+        $contents = $this->read('.gitignore');
+        self::assertStringStartsWith("/.env\n\n# <kanopi/wp-core-installer:core:begin>", $contents);
+        self::assertStringContainsString(
+            "# <kanopi/wp-core-installer:core:end>\n\n# <kanopi/wp-core-installer:packages:begin>",
+            $contents
+        );
+        self::assertStringEndsWith("# <kanopi/wp-core-installer:packages:end>\n", $contents);
+        self::assertStringNotContainsString("\n\n\n", $contents);
+    }
+
+    public function testFirstBlockInANewFileHasNoLeadingBlankLines(): void
+    {
+        $this->writeCore($this->manager(), ['wp-load.php']);
+
+        self::assertStringStartsWith('# <kanopi/wp-core-installer:core:begin>', $this->read('.gitignore'));
+    }
+
+    public function testRemovingAMiddleBlockLeavesOneBlankLine(): void
+    {
+        $this->write('.gitignore', "/.env\n");
+        $manager = $this->manager();
+        $this->writeCore($manager, ['wp-load.php']);
+        $manager->updatePackagesBlock($this->root, $this->root . '/vendor', []);
+
+        $manager->removeCoreBlock($this->root);
+
+        self::assertStringStartsWith("/.env\n\n# <kanopi/wp-core-installer:packages:begin>", $this->read('.gitignore'));
+        self::assertStringNotContainsString("\n\n\n", $this->read('.gitignore'));
+    }
+
+    public function testRemovingTheLastBlockLeavesOneTrailingNewline(): void
+    {
+        $this->write('.gitignore', "/.env\n");
+        $manager = $this->manager();
+        $this->writeCore($manager, ['wp-load.php']);
+
+        $manager->removeCoreBlock($this->root);
+
+        self::assertSame("/.env\n", $this->read('.gitignore'));
+    }
+
+    public function testBlockContentIsNeverTreatedAsARegexBackReference(): void
+    {
+        $manager = $this->manager();
+        $this->writeCore($manager, ['wp-load.php']);
+
+        $this->writeCore($manager, ['cost-$1.php', 'back-\\1.php']);
+
+        self::assertStringContainsString('/web/cost-$1.php', $this->read('.gitignore'));
+        self::assertStringContainsString('/web/back-\\1.php', $this->read('.gitignore'));
+    }
+
     public function testRelativeToProject(): void
     {
         $manager = $this->manager();

@@ -1,0 +1,16 @@
+# Keep LF everywhere: bats/bash scripts break with CRLF, and Windows
+# checkouts would otherwise convert them.
+* text=auto eol=lf
+
+# Not part of the installed package. export-ignore keeps these out of the
+# dist archives Composer users download, and out of Composer path-repo
+# mirrors — which the integration tests use to install this plugin, so
+# without /vendor here every test project would copy the whole dev toolchain.
+/vendor             export-ignore
+/tests              export-ignore
+/.circleci          export-ignore
+/.gitattributes     export-ignore
+/.gitignore         export-ignore
+/phpcs.xml.dist     export-ignore
+/phpstan.neon.dist  export-ignore
+/phpunit.xml.dist   export-ignore

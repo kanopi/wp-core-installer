@@ -4,6 +4,16 @@
 # (a fake "wordpress-core" package + this plugin). Everything is offline:
 # path repositories + packagist disabled, so no network access is needed.
 
+# Convert a bash path to one native PHP/Composer understands. On Windows
+# (Git Bash) "/d/a/repo" becomes "D:/a/repo"; elsewhere it is unchanged.
+native_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 # Resolve the plugin repo root (three dirs up: tests/integration/ -> repo).
 _repo_root() {
   cd "${BATS_TEST_DIRNAME}/../.." && pwd
@@ -13,6 +23,8 @@ _repo_root() {
 # Sets the globals: WORK, CORE, PROJ.
 setup_project() {
   REPO_ROOT="$(_repo_root)"
+  local repo_native
+  repo_native="$(native_path "${REPO_ROOT}")"
   COMPOSER="${COMPOSER_BIN:-composer}"
   export COMPOSER_NO_INTERACTION=1
 
@@ -48,8 +60,8 @@ EOF
     "repositories": {
         "packagist.org": false,
         "core":   { "type": "path", "url": "../fake-core", "options": { "symlink": false } },
-        "plugin": { "type": "path", "url": "${REPO_ROOT}",  "options": { "symlink": false } },
-        "installers": { "type": "path", "url": "${REPO_ROOT}/vendor/composer/installers", "options": { "symlink": false, "versions": { "composer/installers": "2.99.0" } } },
+        "plugin": { "type": "path", "url": "${repo_native}",  "options": { "symlink": false } },
+        "installers": { "type": "path", "url": "${repo_native}/vendor/composer/installers", "options": { "symlink": false, "versions": { "composer/installers": "2.99.0" } } },
         "fixtures": { "type": "path", "url": "../fixtures/*", "options": { "symlink": false } }
     },
     "require": {},
@@ -110,10 +122,6 @@ update_core_to() {
   rm -f "${CORE}/composer.json.bak"
   composer_in_project update fake/wordpress-core
 }
-
-# Fallback for branches without the Windows-aware native_path() from #22;
-# the real definition (earlier in this file) wins when present.
-declare -F native_path >/dev/null || native_path() { printf '%s' "$1"; }
 
 # Write a WordPress.org-style checksums file ({"checksums": {path: md5}})
 # for every file in the fake core package, to $1.
