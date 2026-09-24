@@ -113,9 +113,10 @@ jobs:
       - run:
           name: Install bats-core
           command: |
-            git clone --depth 1 --branch v1.11.0 https://github.com/bats-core/bats-core.git /c/tools/bats-core
-            ln -s /c/tools/bats-core/bin/bats /c/tools/bin/bats 2>/dev/null \
-              || printf '#!/usr/bin/env bash\nexec /c/tools/bats-core/bin/bats "$@"\n' > /c/tools/bin/bats
+            git -c advice.detachedHead=false clone -q --depth 1 --branch v1.11.0 https://github.com/bats-core/bats-core.git /c/tools/bats-core
+            # A wrapper, not a symlink: Git Bash's ln -s copies the file, and a
+            # copied bats looks for its libexec/ relative to the copy.
+            printf '#!/usr/bin/env bash\nexec /c/tools/bats-core/bin/bats "$@"\n' > /c/tools/bin/bats
             chmod +x /c/tools/bin/bats
             bats --version
       - run:
