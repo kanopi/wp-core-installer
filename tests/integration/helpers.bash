@@ -71,9 +71,11 @@ EOF
 EOF
 }
 
-# Run composer inside the throwaway project.
+# Run composer inside the throwaway project. A very wide COLUMNS stops
+# Symfony Console wrapping error messages mid-word (terminal widths differ
+# between CI images), so tests can match message text reliably.
 composer_in_project() {
-  ( cd "${PROJ}" && "${COMPOSER}" "$@" )
+  ( cd "${PROJ}" && COLUMNS=1000 "${COMPOSER}" "$@" )
 }
 
 # Override extra.wordpress-install-dir in the project's composer.json.
