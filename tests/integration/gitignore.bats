@@ -63,3 +63,38 @@ setup() {
   grep -qx '/web/wp-includes/' <<<"$block"
   grep -qx '/web/wp-load.php'  <<<"$block"
 }
+
+# Packages block (#15): every WordPress content type composer/installers
+# places is listed; packages that end up inside vendor/ are not duplicated.
+@test "packages block lists plugins, themes, mu-plugins and drop-ins" {
+  make_wp_package fixture/plugin-a    wordpress-plugin
+  make_wp_package fixture/theme-a     wordpress-theme
+  make_wp_package fixture/mu-a        wordpress-muplugin
+  make_wp_package fixture/dropin-a    wordpress-dropin
+  make_wp_package fixture/lang-a      wordpress-language
+  set_extra '{
+    "wordpress-install-dir": "web",
+    "installer-paths": {
+      "web/wp-content/plugins/{$name}/":    ["type:wordpress-plugin"],
+      "web/wp-content/themes/{$name}/":     ["type:wordpress-theme"],
+      "web/wp-content/mu-plugins/{$name}/": ["type:wordpress-muplugin"],
+      "web/wp-content/{$name}/":            ["type:wordpress-dropin"]
+    }
+  }'
+
+  run composer_in_project require "kanopi/wp-core-installer:*" "fake/wordpress-core:*" \
+    "fixture/plugin-a:*" "fixture/theme-a:*" "fixture/mu-a:*" "fixture/dropin-a:*" "fixture/lang-a:*"
+  [ "$status" -eq 0 ]
+
+  block="$(sed -n '/packages:begin/,/packages:end/p' "${PROJ}/.gitignore")"
+  grep -qx '/web/wp-content/plugins/plugin-a/'  <<<"$block"
+  grep -qx '/web/wp-content/themes/theme-a/'    <<<"$block"
+  grep -qx '/web/wp-content/mu-plugins/mu-a/'   <<<"$block"
+  grep -qx '/web/wp-content/dropin-a/'          <<<"$block"
+  grep -q  'Composer-managed WordPress drop-ins' <<<"$block"
+
+  # No installer handles wordpress-language here, so it lands in vendor/,
+  # which is already ignored — it must not get its own line.
+  [ -d "${PROJ}/vendor/fixture/lang-a" ]
+  ! grep -q 'lang-a' <<<"$block"
+}

@@ -5,6 +5,8 @@ version: 2.1
 # The suite (tests/integration/*.bats) drives the real composer binary against
 # fixture path packages and asserts on the resulting web-root. It runs on a
 # matrix of supported PHP versions (composer.json requires php >=8.1).
+# Run `composer install` in this repo first: the fixtures install
+# composer/installers from vendor/ as an offline path repository.
 
 jobs:
   integration:
@@ -23,6 +25,10 @@ jobs:
       - run:
           name: Validate composer.json
           command: composer validate --strict
+      - run:
+          name: Install dev dependencies
+          # tests use vendor/composer/installers as an offline path repo
+          command: composer install --no-interaction --no-progress
       - run:
           name: Install bats-core
           command: |
