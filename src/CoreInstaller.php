@@ -386,7 +386,7 @@ class CoreInstaller extends LibraryInstaller
 
             if (copy($item->getRealPath(), $destination) === false) {
                 $this->io->writeError(
-                    sprintf('  - <e>Failed to copy:</e> %s → %s', $item->getRealPath(), $destination)
+                    sprintf('  - <error>Failed to copy:</error> %s → %s', $item->getRealPath(), $destination)
                 );
             } else {
                 if (!$isSkipIfExists) {
