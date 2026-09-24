@@ -40,7 +40,7 @@ class ProjectPaths
 
     private Filesystem $filesystem;
 
-    public function __construct(private readonly Composer $composer)
+    public function __construct(private Composer $composer)
     {
         $this->filesystem = new Filesystem();
     }

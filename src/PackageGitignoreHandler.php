@@ -51,9 +51,9 @@ class PackageGitignoreHandler
     ];
 
     public function __construct(
-        private readonly Composer $composer,
-        private readonly IOInterface $io,
-        private readonly GitignoreManager $gitignoreManager
+        private Composer $composer,
+        private IOInterface $io,
+        private GitignoreManager $gitignoreManager
     ) {
     }
 

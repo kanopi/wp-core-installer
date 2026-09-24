@@ -4,7 +4,7 @@ version: 2.1
 #
 # The suite (tests/integration/*.bats) drives the real composer binary against
 # fixture path packages and asserts on the resulting web-root. It runs on a
-# matrix of supported PHP versions (composer.json requires php >=8.1).
+# matrix of supported PHP versions (composer.json requires php >=8.0).
 # Run `composer install` in this repo first: the fixtures install
 # composer/installers from vendor/ as an offline path repository.
 
@@ -46,4 +46,4 @@ workflows:
       - integration:
           matrix:
             parameters:
-              php-version: ["8.1", "8.2", "8.3", "8.4", "8.5"]
+              php-version: ["8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
