@@ -8,7 +8,7 @@
 # can't reach).
 #
 # Run:  bats tests/integration/
-# Deps: bats-core, composer, php (>=8.0).
+# Deps: bats-core, composer, php (>=8.1).
 
 load 'helpers'
 
