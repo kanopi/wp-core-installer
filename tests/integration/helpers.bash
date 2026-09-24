@@ -110,3 +110,21 @@ update_core_to() {
   rm -f "${CORE}/composer.json.bak"
   composer_in_project update fake/wordpress-core
 }
+
+# Fallback for branches without the Windows-aware native_path() from #22;
+# the real definition (earlier in this file) wins when present.
+declare -F native_path >/dev/null || native_path() { printf '%s' "$1"; }
+
+# Write a WordPress.org-style checksums file ({"checksums": {path: md5}})
+# for every file in the fake core package, to $1.
+write_core_checksums() {
+  php -r '
+    $base = $argv[1]; $out = [];
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS | FilesystemIterator::UNIX_PATHS));
+    foreach ($it as $f) {
+      $rel = substr(str_replace("\\", "/", $f->getPathname()), strlen($base) + 1);
+      if ($rel !== "composer.json") { $out[$rel] = md5_file($f->getPathname()); }
+    }
+    file_put_contents($argv[2], json_encode(["checksums" => $out]));
+  ' "$(native_path "${CORE}")" "$1"
+}
