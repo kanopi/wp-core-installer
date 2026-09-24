@@ -97,8 +97,10 @@ jobs:
               echo 'extension_dir = "ext"'
               for ext in curl fileinfo mbstring openssl zip; do echo "extension=${ext}"; done
             } >> /c/tools/php/php.ini
-            echo 'export PATH="/c/tools/php:/c/tools/bin:$PATH"' >> "$BASH_ENV"
-            export PATH="/c/tools/php:/c/tools/bin:$PATH"
+            # /usr/bin (Git Bash's GNU tools) must come before System32, or
+            # bats picks up Windows sort.exe / find.exe.
+            echo 'export PATH="/c/tools/php:/c/tools/bin:/usr/bin:$PATH"' >> "$BASH_ENV"
+            export PATH="/c/tools/php:/c/tools/bin:/usr/bin:$PATH"
             curl -fsSL -o /c/tools/composer.phar https://getcomposer.org/download/latest-stable/composer.phar
             printf '#!/usr/bin/env bash\nexec php "C:/tools/composer.phar" "$@"\n' > /c/tools/bin/composer
             chmod +x /c/tools/bin/composer
