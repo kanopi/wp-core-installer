@@ -95,6 +95,8 @@ and all other settings go under `extra.wp-core-installer` in your
 | `skip-if-exists` | string[] | `[]` | Extra paths that are copied on **first** install only and never overwritten or gitignored. Adds to the [built-in list](#built-in-skip-if-exists-paths). |
 | `deploy-bundled` | object | `{}` | Themes and plugins that ship with core to deploy anyway, e.g. `{"themes": ["twentytwentyfive"], "plugins": ["akismet", "hello.php"]}`. See [below](#bundled-themes-and-plugins). |
 | `manage-gitignore` | bool or object | `true` | `false` turns off both [managed blocks](#managed-gitignore-blocks). `{"core": false}` or `{"packages": false}` turns off one. |
+| `scaffold-wp-config` | bool | `false` | Create a starter `wp-config.php` in the web-root when none exists. See [below](#starter-wp-configphp). |
+| `wp-config-template` | string | *(built-in)* | Template for `scaffold-wp-config`, relative to the project root, or absolute. |
 | `manage-mu-plugin-autoloader` | bool | `true` | `false` stops the plugin from writing (and gitignoring) the [autoloader mu-plugin](#autoloader-mu-plugin). |
 | `mu-plugins-dir` | string | `"wp-content/mu-plugins"` | The mu-plugins directory, **relative to the web-root**, or absolute. |
 | `mu-plugin-autoloader-file` | string | `"000-autoloader.php"` | Filename of the autoloader mu-plugin. |
@@ -406,6 +408,50 @@ plugin writes a small bootstrap file that requires Composer's autoloader:
 
 ---
 
+## Starter `wp-config.php`
+
+With `"scaffold-wp-config": true`, the plugin creates
+`<web-root>/wp-config.php` when there isn't one. It does this on the first
+`composer install` for new projects, and again whenever the file is missing.
+
+It **never overwrites** an existing `wp-config.php`. It also skips creating
+one when a `wp-config.php` already sits **one directory above the
+web-root**, because WordPress loads that file and a second one would shadow
+it. After that, the file is yours: it's protected, never updated and never
+gitignored, so commit it.
+
+The built-in template **reads everything from the environment and contains
+no secrets**:
+
+| Variable | Default |
+|---|---|
+| `DB_NAME`, `DB_USER`, `DB_PASSWORD` | empty |
+| `DB_HOST` | `localhost` |
+| `DB_CHARSET` / `DB_COLLATE` | `utf8mb4` / empty |
+| `WP_TABLE_PREFIX` | `wp_` |
+| `WP_ENVIRONMENT_TYPE`, `WP_HOME`, `WP_SITEURL` | not defined |
+| `WP_DEBUG` | `false` (accepts `true`, `1`, `yes`, `on`) |
+| `AUTH_KEY` … `NONCE_SALT` (all eight) | not defined |
+
+If a key or salt isn't set, WordPress generates it and stores it in the
+database (see `wp_salt()`), so the site works either way. For stable
+sessions across servers, set them in the environment.
+
+If [`vlucas/phpdotenv`](https://github.com/vlucas/phpdotenv) is installed,
+a `.env` file in the project root is loaded first. The generated file also
+requires Composer's autoloader before WordPress starts.
+
+To use your own template, set `wp-config-template`. The template can use
+these placeholders, both relative to the web-root and meant for use after
+`__DIR__ . '/'`:
+
+| Placeholder | Example |
+|---|---|
+| `{{AUTOLOAD_RELATIVE_PATH}}` | `../vendor/autoload.php` |
+| `{{PROJECT_ROOT_RELATIVE_PATH}}` | `../` (empty when the web-root is the project root) |
+
+---
+
 ## Typical project layout
 
 With `"wordpress-install-dir": "web"`:
@@ -417,7 +463,7 @@ my-wordpress-site/
 ├── .gitignore                     ← yours, plus the two managed blocks
 ├── vendor/                        ← gitignored (includes the staging dir + manifest)
 └── web/
-    ├── wp-config.php              ← protected (you create this)
+    ├── wp-config.php              ← protected (you create it, or scaffold-wp-config does)
     ├── .htaccess                  ← skip-if-exists (first install only)
     ├── wp-config-sample.php       ← skip-if-exists
     ├── index.php                  ← deployed; gitignored

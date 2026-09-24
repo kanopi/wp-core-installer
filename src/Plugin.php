@@ -76,20 +76,25 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
 
     /**
      * After all packages have been installed / updated:
-     *   1. Scaffold the Composer autoloader mu-plugin (skip-if-exists).
-     *   2. Refresh the .gitignore block for all Composer-managed WP packages.
+     *   0. Make sure core is deployed.
+     *   1. Create a starter wp-config.php when opted in and none exists.
+     *   2. Scaffold the Composer autoloader mu-plugin.
+     *   3. Refresh the .gitignore block for all Composer-managed WP packages.
      */
     public function onPostInstallOrUpdate(Event $event): void
     {
         // ── 0. Ensure core is deployed (handles vendor-cache scenario) ───────
         $this->coreInstaller->ensureCoreDeployed();
 
-        // ── 1. Autoloader mu-plugin ───────────────────────────────────────────
+        // ── 1. Starter wp-config.php (opt-in, first install only) ─────────────
+        (new WpConfigScaffolder($this->composer, $this->io))->scaffold();
+
+        // ── 2. Autoloader mu-plugin ───────────────────────────────────────────
         $this->io->write('<info>WP Core Installer:</info> Checking Composer autoloader mu-plugin…');
 
         (new MuPluginScaffolder($this->composer, $this->io))->scaffold();
 
-        // ── 2. .gitignore packages block ──────────────────────────────────────
+        // ── 3. .gitignore packages block ──────────────────────────────────────
         $this->io->write('<info>WP Core Installer:</info> Refreshing .gitignore for Composer-managed packages…');
 
         (new PackageGitignoreHandler(

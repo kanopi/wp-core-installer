@@ -111,6 +111,38 @@ final class ProjectPathsTest extends TestCase
     }
 
     /**
+     * @return array<string, array{string, string, string}>
+     */
+    public static function relativePathProvider(): array
+    {
+        return [
+            'sibling file'      => ['/app/web', '/app/vendor/autoload.php', '../vendor/autoload.php'],
+            'parent directory'  => ['/app/web', '/app', '..'],
+            'same directory'    => ['/app', '/app', ''],
+            'child'             => ['/app', '/app/web/wp-config.php', 'web/wp-config.php'],
+            'two levels up'     => ['/app/public/wp', '/app/vendor/autoload.php', '../../vendor/autoload.php'],
+            'windows drive'     => ['C:/app/web', 'C:/app/vendor/autoload.php', '../vendor/autoload.php'],
+            'trailing slashes'  => ['/app/web/', '/app/', '..'],
+        ];
+    }
+
+    /**
+     * @dataProvider relativePathProvider
+     */
+    public function testRelativePath(string $from, string $to, string $expected): void
+    {
+        self::assertSame($expected, ProjectPaths::relativePath($from, $to));
+    }
+
+    public function testConfigBool(): void
+    {
+        $paths = new ProjectPaths($this->composer(['wp-core-installer' => ['scaffold-wp-config' => true]]));
+
+        self::assertTrue($paths->configBool('scaffold-wp-config', false));
+        self::assertFalse($paths->configBool('something-else', false));
+    }
+
+    /**
      * @return array<string, array{array<string, mixed>, callable(ProjectPaths): mixed, string}>
      */
     public static function invalidConfigProvider(): array
@@ -135,6 +167,11 @@ final class ProjectPathsTest extends TestCase
                 ['wp-core-installer' => ['skip-if-exists' => ['robots.txt', 1]]],
                 static fn (ProjectPaths $p): array => $p->configStringList('skip-if-exists'),
                 'extra.wp-core-installer.skip-if-exists[] in composer.json must be a string, int given',
+            ],
+            'bool setting given a string' => [
+                ['wp-core-installer' => ['scaffold-wp-config' => 'yes']],
+                static fn (ProjectPaths $p): bool => $p->configBool('scaffold-wp-config', false),
+                'scaffold-wp-config in composer.json must be true or false, string given',
             ],
             'deploy-bundled not an object' => [
                 ['wp-core-installer' => ['deploy-bundled' => 'akismet']],
