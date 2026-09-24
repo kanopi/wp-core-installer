@@ -339,7 +339,7 @@ class GitignoreManager
      */
     private function writeBlock(string $projectRoot, string $blockId, array $contentLines): void
     {
-        $path    = $projectRoot . DIRECTORY_SEPARATOR . '.gitignore';
+        $path    = $projectRoot . '/.gitignore';
         $current = $this->read($path);
         $block   = $this->renderBlock($blockId, $contentLines);
         $updated = $this->replaceOrAppend($current, $blockId, $block);
@@ -370,7 +370,7 @@ class GitignoreManager
 
     private function removeBlock(string $projectRoot, string $blockId): void
     {
-        $path = $projectRoot . DIRECTORY_SEPARATOR . '.gitignore';
+        $path = $projectRoot . '/.gitignore';
 
         if (!file_exists($path)) {
             return;

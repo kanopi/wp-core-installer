@@ -383,9 +383,10 @@ class CoreInstaller extends LibraryInstaller
 
         /** @var \SplFileInfo $item */
         foreach ($this->createIterator($stagingPath) as $item) {
-            $relativePath = $this->relativePath($stagingPath, $item->getRealPath());
-            $normalised   = str_replace('\\', '/', $relativePath);
-            $destination  = $webRoot . DIRECTORY_SEPARATOR . $relativePath;
+            // getPathname(), not getRealPath(): a symlink inside the package
+            // must not resolve to a path outside the staging directory.
+            $normalised  = $this->relativePath($stagingPath, $item->getPathname());
+            $destination = $webRoot . '/' . $normalised;
 
             // ── Tier 1: skip-if-exists ───────────────────────────────────────
             // Checked BEFORE always-protected so that specific files listed in
@@ -427,9 +428,9 @@ class CoreInstaller extends LibraryInstaller
 
             $this->filesystem->ensureDirectoryExists(dirname($destination));
 
-            if (copy($item->getRealPath(), $destination) === false) {
+            if (copy($item->getPathname(), $destination) === false) {
                 $this->io->writeError(
-                    sprintf('  - <error>Failed to copy:</error> %s → %s', $item->getRealPath(), $destination)
+                    sprintf('  - <error>Failed to copy:</error> %s → %s', $item->getPathname(), $destination)
                 );
             } else {
                 if (!$isSkipIfExists) {
@@ -536,7 +537,7 @@ class CoreInstaller extends LibraryInstaller
 
         foreach (array_diff($previous->files, $shipped) as $file) {
             if (
-                str_starts_with($file, '/')
+                $this->filesystem->isAbsolutePath($file)
                 || in_array('..', explode('/', $file), true)
                 || $this->isProtected($file, $protected)
                 || $this->isSkipIfExists($file, $skipIfExists)
@@ -645,9 +646,15 @@ class CoreInstaller extends LibraryInstaller
         );
     }
 
+    /**
+     * $fullPath relative to $baseDir with forward slashes. Both are
+     * normalised first: on Windows realpath() yields backslashes while the
+     * iterator (UNIX_PATHS) appends children with forward slashes.
+     */
     private function relativePath(string $baseDir, string $fullPath): string
     {
-        $baseDir = rtrim($baseDir, '/\\') . DIRECTORY_SEPARATOR;
+        $baseDir  = rtrim(str_replace('\\', '/', $baseDir), '/') . '/';
+        $fullPath = str_replace('\\', '/', $fullPath);
 
         if (str_starts_with($fullPath, $baseDir)) {
             return substr($fullPath, strlen($baseDir));
