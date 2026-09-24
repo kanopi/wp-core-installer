@@ -104,6 +104,9 @@ class CoreInstaller extends LibraryInstaller
     private GitignoreManager $gitignoreManager;
     private ProjectPaths $paths;
 
+    /** Set once core has been deployed in this Composer process. */
+    private bool $deployedThisRun = false;
+
     public function __construct(
         IOInterface $io,
         Composer $composer,
@@ -208,10 +211,17 @@ class CoreInstaller extends LibraryInstaller
      * OR when this plugin was required AFTER core was already installed by
      * the default installer (the `composer require` scenario).
      *
-     * Always deploys core files to the web-root regardless of current state.
+     * Skips the copy when install()/update() already deployed in this run,
+     * or when the deploy manifest shows the same build is already in place
+     * and every recorded file is still on disk.
      */
     public function ensureCoreDeployed(): void
     {
+        if ($this->deployedThisRun) {
+            $this->io->write('  - Core already deployed during this run; skipping.', true, IOInterface::VERBOSE);
+            return;
+        }
+
         // Find a wordpress-core package — try the local repo first, then the lock file.
         $package = $this->findWordPressCorePackage();
 
@@ -234,6 +244,24 @@ class CoreInstaller extends LibraryInstaller
                 ),
                 true,
                 IOInterface::VERBOSE
+            );
+            return;
+        }
+
+        $webRoot  = $this->paths->webRoot();
+        $expected = $this->manifestFor($package, $webRoot, $this->buildProtectedList(), $this->buildSkipIfExistsList());
+        $previous = DeployManifest::load($this->manifestPath());
+
+        if ($previous !== null && $previous->describesSameDeployAs($expected) && $previous->isIntact()) {
+            $this->io->write(
+                sprintf('<info>WP Core Installer:</info> %s is up to date in the web-root; skipping deploy.', $package->getPrettyName())
+            );
+            // Still refresh the core block so .gitignore settings take effect.
+            $this->gitignoreManager->updateCoreBlock(
+                $this->paths->projectRoot(),
+                $webRoot,
+                $previous->files,
+                $this->paths->vendorDir()
             );
             return;
         }
@@ -419,6 +447,8 @@ class CoreInstaller extends LibraryInstaller
         // ── Remove files the previous core shipped but this one does not ──────
         $manifest = $this->manifestFor($package, $webRoot, $protected, $skipIfExist)->withFiles($deployed);
         $this->removeStaleFiles($manifest, $shipped, $protected, $skipIfExist);
+
+        $this->deployedThisRun = true;
 
         if (!$manifest->save($this->manifestPath())) {
             $this->io->writeError(
