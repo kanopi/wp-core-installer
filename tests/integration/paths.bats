@@ -58,7 +58,7 @@ assert_mu_plugin_in() {
 }
 
 @test "absolute install dir outside the project deploys there, no bogus .gitignore lines" {
-  set_extra "{\"wordpress-install-dir\": \"${WORK}/external-web\"}"
+  set_extra "{\"wordpress-install-dir\": \"$(native_path "${WORK}")/external-web\"}"
 
   run install_core
   [ "$status" -eq 0 ]

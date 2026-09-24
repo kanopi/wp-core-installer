@@ -76,6 +76,10 @@ final class ProjectPathsTest extends TestCase
 
     public function testSymlinkedAncestorsAreCanonicalised(): void
     {
+        if (PHP_OS_FAMILY === 'Windows') {
+            self::markTestSkipped('Creating symlinks on Windows needs elevated privileges.');
+        }
+
         mkdir($this->root . '/real');
         symlink($this->root . '/real', $this->root . '/link');
 
