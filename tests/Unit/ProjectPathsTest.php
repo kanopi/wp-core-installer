@@ -96,6 +96,20 @@ final class ProjectPathsTest extends TestCase
         self::assertSame([], $paths->configStringList('skip-if-exists'));
     }
 
+    public function testBundledPaths(): void
+    {
+        $paths = new ProjectPaths($this->composer(['wp-core-installer' => ['deploy-bundled' => [
+            'themes'  => ['twentytwentyfive'],
+            'plugins' => ['akismet', 'hello.php', 'akismet'],
+        ]]]));
+
+        self::assertSame(
+            ['wp-content/themes/twentytwentyfive', 'wp-content/plugins/akismet', 'wp-content/plugins/hello.php'],
+            $paths->bundledPaths()
+        );
+        self::assertSame([], (new ProjectPaths($this->composer()))->bundledPaths());
+    }
+
     /**
      * @return array<string, array{array<string, mixed>, callable(ProjectPaths): mixed, string}>
      */
@@ -121,6 +135,26 @@ final class ProjectPathsTest extends TestCase
                 ['wp-core-installer' => ['skip-if-exists' => ['robots.txt', 1]]],
                 static fn (ProjectPaths $p): array => $p->configStringList('skip-if-exists'),
                 'extra.wp-core-installer.skip-if-exists[] in composer.json must be a string, int given',
+            ],
+            'deploy-bundled not an object' => [
+                ['wp-core-installer' => ['deploy-bundled' => 'akismet']],
+                static fn (ProjectPaths $p): array => $p->bundledPaths(),
+                'deploy-bundled in composer.json must be an object',
+            ],
+            'deploy-bundled unknown kind' => [
+                ['wp-core-installer' => ['deploy-bundled' => ['mu-plugins' => ['x']]]],
+                static fn (ProjectPaths $p): array => $p->bundledPaths(),
+                'only accepts "themes" and "plugins", not "mu-plugins"',
+            ],
+            'deploy-bundled path traversal' => [
+                ['wp-core-installer' => ['deploy-bundled' => ['themes' => ['../uploads']]]],
+                static fn (ProjectPaths $p): array => $p->bundledPaths(),
+                'must be a single theme or plugin name',
+            ],
+            'deploy-bundled nested path' => [
+                ['wp-core-installer' => ['deploy-bundled' => ['plugins' => ['akismet/akismet.php']]]],
+                static fn (ProjectPaths $p): array => $p->bundledPaths(),
+                'must be a single theme or plugin name',
             ],
             'mu-plugins dir not a string' => [
                 ['wp-core-installer' => ['mu-plugins-dir' => false]],

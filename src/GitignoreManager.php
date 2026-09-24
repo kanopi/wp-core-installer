@@ -243,9 +243,13 @@ class GitignoreManager
         foreach ($groups as $segment => $paths) {
             if (in_array($segment, self::PARTIALLY_MANAGED_DIRS, true)) {
                 // Partially-managed directory: emit each deployed file explicitly
-                // so that unmanaged siblings stay tracked in git.
+                // so that unmanaged siblings stay tracked in git. Bundled
+                // themes/plugins (deploy-bundled) are whole directories we
+                // manage, so each collapses to a single directory rule.
                 foreach ($paths as $path) {
-                    $entries[] = '/' . $webPrefix . $path;
+                    $entries[] = preg_match('#^(wp-content/(?:themes|plugins)/[^/]+)/#', $path, $bundle) === 1
+                        ? '/' . $webPrefix . $bundle[1] . '/'
+                        : '/' . $webPrefix . $path;
                 }
             } else {
                 // Fully-managed entry: one pattern covers the whole thing.
