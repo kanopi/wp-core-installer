@@ -69,8 +69,32 @@ class GitignoreManager
         'wp-content/mu-plugins',
     ];
 
-    public function __construct(private readonly IOInterface $io)
+    /**
+     * @param array<string, mixed> $pluginConfig The root package's extra.wp-core-installer array.
+     */
+    public function __construct(
+        private readonly IOInterface $io,
+        private readonly array $pluginConfig = []
+    ) {
+    }
+
+    /**
+     * Whether the given block ("core" or "packages") is managed.
+     *
+     * extra.wp-core-installer.manage-gitignore accepts:
+     *   true / omitted              → both blocks managed (default)
+     *   false                       → neither block managed
+     *   {"core": false, ...}        → per-block; unlisted blocks default to true
+     */
+    public function isBlockManaged(string $blockId): bool
     {
+        $setting = $this->pluginConfig['manage-gitignore'] ?? true;
+
+        if (is_array($setting)) {
+            return (bool) ($setting[$blockId] ?? true);
+        }
+
+        return (bool) $setting;
     }
 
     // -------------------------------------------------------------------------
@@ -93,8 +117,10 @@ class GitignoreManager
         array $deployedFiles,
         string $vendorDirAbs
     ): void {
-        $lines = $this->buildCoreBlockLines($projectRoot, $webRoot, $deployedFiles, $vendorDirAbs);
-        $this->writeBlock($projectRoot, 'core', $lines);
+        if (!$this->skipUnmanaged($projectRoot, 'core')) {
+            $lines = $this->buildCoreBlockLines($projectRoot, $webRoot, $deployedFiles, $vendorDirAbs);
+            $this->writeBlock($projectRoot, 'core', $lines);
+        }
     }
 
     /**
@@ -124,8 +150,10 @@ class GitignoreManager
         array $byType,
         ?string $muPluginFileAbs = null
     ): void {
-        $lines = $this->buildPackagesBlockLines($projectRoot, $vendorDirAbs, $byType, $muPluginFileAbs);
-        $this->writeBlock($projectRoot, 'packages', $lines);
+        if (!$this->skipUnmanaged($projectRoot, 'packages')) {
+            $lines = $this->buildPackagesBlockLines($projectRoot, $vendorDirAbs, $byType, $muPluginFileAbs);
+            $this->writeBlock($projectRoot, 'packages', $lines);
+        }
     }
 
     /**
@@ -134,6 +162,26 @@ class GitignoreManager
     public function removePackagesBlock(string $projectRoot): void
     {
         $this->removeBlock($projectRoot, 'packages');
+    }
+
+    /**
+     * When a block is opted out, strip any copy left from before the opt-out
+     * (so its entries stop hiding files) and tell the caller to skip writing.
+     */
+    private function skipUnmanaged(string $projectRoot, string $blockId): bool
+    {
+        if ($this->isBlockManaged($blockId)) {
+            return false;
+        }
+
+        $this->io->write(
+            sprintf('  - <comment>.gitignore "%s" block not managed</comment> (manage-gitignore).', $blockId),
+            true,
+            IOInterface::VERBOSE
+        );
+        $this->removeBlock($projectRoot, $blockId);
+
+        return true;
     }
 
     // -------------------------------------------------------------------------
