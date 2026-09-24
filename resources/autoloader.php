@@ -8,6 +8,8 @@
  * Author:       kanopi/wp-core-installer
  * License:      MIT
  *
+ * @generated kanopi/wp-core-installer
+ *
  * This file is generated and overwritten on every `composer install` and
  * `composer update` by kanopi/wp-core-installer.  Do not edit it manually —
  * your changes will be lost on the next Composer run.

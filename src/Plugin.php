@@ -83,7 +83,7 @@ class Plugin implements PluginInterface, EventSubscriberInterface
         (new PackageGitignoreHandler(
             $this->composer,
             $this->io,
-            new GitignoreManager($this->io)
+            new GitignoreManager($this->io, (new ProjectPaths($this->composer))->pluginConfig())
         ))->handle();
     }
 }

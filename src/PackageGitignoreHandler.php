@@ -24,9 +24,15 @@ use Composer\Package\PackageInterface;
  *   wordpress-theme          → wp-content/themes/{name}/
  *   wordpress-theme-custom   → wp-content/themes/custom/{name}/ (or wherever installer-paths maps it)
  *   wordpress-muplugin       → wp-content/mu-plugins/{name}/
+ *   wordpress-dropin         → wp-content/{name}/ (composer/installers default)
+ *   wordpress-language       → wherever its installer / installer-paths put it
  *
- * Any package whose install path falls OUTSIDE the project root is silently
- * skipped (this plugin only manages paths it can express as repo-relative).
+ * Skipped (verbose message only):
+ *   - install paths OUTSIDE the project root (not expressible as repo-relative);
+ *   - install paths INSIDE the vendor dir, which is already ignored as a whole.
+ *     This is where packages land when no installer handles their type, and
+ *     is typical for language packs copied into wp-content/languages by a
+ *     separate drop-in installer — those copied files are not tracked here.
  */
 class PackageGitignoreHandler
 {
@@ -40,12 +46,14 @@ class PackageGitignoreHandler
         'wordpress-theme'        => 'themes',
         'wordpress-theme-custom' => 'themes',
         'wordpress-muplugin'     => 'mu-plugins',
+        'wordpress-dropin'       => 'dropins',
+        'wordpress-language'     => 'languages',
     ];
 
     public function __construct(
-        private readonly Composer $composer,
-        private readonly IOInterface $io,
-        private readonly GitignoreManager $gitignoreManager
+        private Composer $composer,
+        private IOInterface $io,
+        private GitignoreManager $gitignoreManager
     ) {
     }
 
@@ -59,8 +67,9 @@ class PackageGitignoreHandler
      */
     public function handle(): void
     {
-        $projectRoot  = (string) getcwd();
-        $vendorDirAbs = (string) $this->composer->getConfig()->get('vendor-dir');
+        $paths        = new ProjectPaths($this->composer);
+        $projectRoot  = $paths->projectRoot();
+        $vendorDirAbs = $paths->vendorDir();
 
         // Ask the scaffolder for the managed file path (null when opt-out).
         // The file does not need to exist yet — we gitignore it by path so
@@ -68,7 +77,7 @@ class PackageGitignoreHandler
         // `composer install` has run in a fresh checkout.
         $muPluginFile = (new MuPluginScaffolder($this->composer, $this->io))->resolveOutputPath();
 
-        $byType = $this->resolvePackagePaths($projectRoot);
+        $byType = $this->resolvePackagePaths($projectRoot, $vendorDirAbs);
 
         $this->gitignoreManager->updatePackagesBlock($projectRoot, $vendorDirAbs, $byType, $muPluginFile);
     }
@@ -83,7 +92,7 @@ class PackageGitignoreHandler
      *
      * @return array<string, string[]>  e.g. ['plugins' => ['wp-content/plugins/akismet'], ...]
      */
-    private function resolvePackagePaths(string $projectRoot): array
+    private function resolvePackagePaths(string $projectRoot, string $vendorDirAbs): array
     {
         $installManager = $this->composer->getInstallationManager();
         $localRepo      = $this->composer->getRepositoryManager()->getLocalRepository();
@@ -122,6 +131,20 @@ class PackageGitignoreHandler
                 $this->io->write(
                     sprintf(
                         '  - <comment>Skipping %s</comment>: install path is outside project root.',
+                        $package->getPrettyName()
+                    ),
+                    true,
+                    IOInterface::VERBOSE
+                );
+                continue;
+            }
+
+            $vendorRelative = $this->gitignoreManager->relativeToProject($projectRoot, $vendorDirAbs);
+
+            if ($relative === $vendorRelative || str_starts_with($relative, $vendorRelative . '/')) {
+                $this->io->write(
+                    sprintf(
+                        '  - <comment>Skipping %s</comment>: installed inside the vendor dir (already ignored).',
                         $package->getPrettyName()
                     ),
                     true,

@@ -86,7 +86,7 @@ class CoreInstaller extends LibraryInstaller
     /**
      * Paths copied on FIRST install only (destination must not yet exist).
      * Never overwritten on `composer update` — user edits are preserved.
-     * Not added to .gitignore; the user decides whether to track these.
+     * Never added to .gitignore; the user decides whether to track these.
      */
     private const SKIP_IF_EXISTS = [
         '.htaccess',
@@ -102,6 +102,10 @@ class CoreInstaller extends LibraryInstaller
     ];
 
     private GitignoreManager $gitignoreManager;
+    private ProjectPaths $paths;
+
+    /** Set once core has been deployed in this Composer process. */
+    private bool $deployedThisRun = false;
 
     public function __construct(
         IOInterface $io,
@@ -111,7 +115,8 @@ class CoreInstaller extends LibraryInstaller
         ?BinaryInstaller $binaryInstaller = null
     ) {
         parent::__construct($io, $composer, $type, $filesystem, $binaryInstaller);
-        $this->gitignoreManager = new GitignoreManager($io);
+        $this->paths            = new ProjectPaths($composer);
+        $this->gitignoreManager = new GitignoreManager($io, $this->paths->pluginConfig());
     }
 
     // -------------------------------------------------------------------------
@@ -190,7 +195,7 @@ class CoreInstaller extends LibraryInstaller
             '<info>WP Core Installer:</info> Removing staging directory (web-root files are preserved).'
         );
 
-        $this->gitignoreManager->removeCoreBlock((string) getcwd());
+        $this->gitignoreManager->removeCoreBlock($this->paths->projectRoot());
 
         return parent::uninstall($repo, $package);
     }
@@ -206,10 +211,17 @@ class CoreInstaller extends LibraryInstaller
      * OR when this plugin was required AFTER core was already installed by
      * the default installer (the `composer require` scenario).
      *
-     * Always deploys core files to the web-root regardless of current state.
+     * Skips the copy when install()/update() already deployed in this run,
+     * or when the deploy manifest shows the same build is already in place
+     * and every recorded file is still on disk.
      */
     public function ensureCoreDeployed(): void
     {
+        if ($this->deployedThisRun) {
+            $this->io->write('  - Core already deployed during this run; skipping.', true, IOInterface::VERBOSE);
+            return;
+        }
+
         // Find a wordpress-core package — try the local repo first, then the lock file.
         $package = $this->findWordPressCorePackage();
 
@@ -232,6 +244,27 @@ class CoreInstaller extends LibraryInstaller
                 ),
                 true,
                 IOInterface::VERBOSE
+            );
+            return;
+        }
+
+        $webRoot  = $this->paths->webRoot();
+        $expected = $this->manifestFor($package, $webRoot, $this->buildProtectedList(), $this->buildSkipIfExistsList());
+        $previous = DeployManifest::load($this->manifestPath());
+
+        if ($previous !== null && $previous->describesSameDeployAs($expected) && $previous->isIntact()) {
+            $this->io->write(
+                sprintf(
+                    '<info>WP Core Installer:</info> %s is up to date in the web-root; skipping deploy.',
+                    $package->getPrettyName()
+                )
+            );
+            // Still refresh the core block so .gitignore settings take effect.
+            $this->gitignoreManager->updateCoreBlock(
+                $this->paths->projectRoot(),
+                $webRoot,
+                $previous->files,
+                $this->paths->vendorDir()
             );
             return;
         }
@@ -282,8 +315,8 @@ class CoreInstaller extends LibraryInstaller
         // 2. Fall back to the lock file — covers scenarios where the local
         //    repo hasn't been fully populated yet (e.g. plugin loaded via
         //    patch before the full install completes).
-        $locker = $this->composer->getLocker();
-        if ($locker->isLocked()) {
+        $locker = $this->composer instanceof Composer ? $this->composer->getLocker() : null;
+        if ($locker !== null && $locker->isLocked()) {
             foreach ($locker->getLockedRepository(true)->getPackages() as $package) {
                 if ($package->getType() === 'wordpress-core') {
                     return $package;
@@ -320,8 +353,8 @@ class CoreInstaller extends LibraryInstaller
             );
         }
 
-        $projectRoot = (string) getcwd();
-        $webRoot     = $this->resolveWebRoot($projectRoot);
+        $projectRoot = $this->paths->projectRoot();
+        $webRoot     = $this->paths->webRoot();
         $this->filesystem->ensureDirectoryExists($webRoot);
 
         $this->io->write(sprintf('  - Web-root: <comment>%s</comment>', $webRoot));
@@ -331,8 +364,22 @@ class CoreInstaller extends LibraryInstaller
 
         $copied   = 0;
         $skipped  = 0;
-        /** @var string[] $deployed  Normalised relative paths of every file written. */
+        /**
+         * Normalised relative paths of every always-synced core file written.
+         * Skip-if-exists files are deliberately excluded: they belong to the
+         * project after first install, so they are never gitignored.
+         *
+         * @var string[] $deployed
+         */
         $deployed = [];
+        /**
+         * Every always-synced file the source ships, copied or not. Stale-file
+         * detection diffs against this (not $deployed) so a failed copy is
+         * never mistaken for a file core dropped.
+         *
+         * @var string[] $shipped
+         */
+        $shipped = [];
 
         /** @var \SplFileInfo $item */
         foreach ($this->createIterator($stagingPath) as $item) {
@@ -344,7 +391,9 @@ class CoreInstaller extends LibraryInstaller
             // Checked BEFORE always-protected so that specific files listed in
             // SKIP_IF_EXISTS (e.g. wp-content/themes/index.php) can pass through
             // even when their parent directory is in ALWAYS_PROTECTED.
-            if ($this->isSkipIfExists($normalised, $skipIfExist)) {
+            $isSkipIfExists = $this->isSkipIfExists($normalised, $skipIfExist);
+
+            if ($isSkipIfExists) {
                 if (file_exists($destination)) {
                     $this->io->write(
                         sprintf('  - <comment>Skipping (exists):</comment> %s', $normalised),
@@ -352,10 +401,6 @@ class CoreInstaller extends LibraryInstaller
                         IOInterface::VERBOSE
                     );
                     $skipped++;
-                    // Still record it — the file is on disk and managed by us.
-                    if (!$item->isDir()) {
-                        $deployed[] = $normalised;
-                    }
                     continue;
                 }
                 // Falls through to tier 3 (deploy) below.
@@ -376,14 +421,20 @@ class CoreInstaller extends LibraryInstaller
                 continue;
             }
 
+            if (!$isSkipIfExists) {
+                $shipped[] = $normalised;
+            }
+
             $this->filesystem->ensureDirectoryExists(dirname($destination));
 
             if (copy($item->getRealPath(), $destination) === false) {
                 $this->io->writeError(
-                    sprintf('  - <e>Failed to copy:</e> %s → %s', $item->getRealPath(), $destination)
+                    sprintf('  - <error>Failed to copy:</error> %s → %s', $item->getRealPath(), $destination)
                 );
             } else {
-                $deployed[] = $normalised;
+                if (!$isSkipIfExists) {
+                    $deployed[] = $normalised;
+                }
                 $copied++;
             }
         }
@@ -396,33 +447,134 @@ class CoreInstaller extends LibraryInstaller
             )
         );
 
+        // ── Remove files the previous core shipped but this one does not ──────
+        $manifest = $this->manifestFor($package, $webRoot, $protected, $skipIfExist)->withFiles($deployed);
+        $this->removeStaleFiles($manifest, $shipped, $protected, $skipIfExist);
+
+        $this->deployedThisRun = true;
+
+        if (!$manifest->save($this->manifestPath())) {
+            $this->io->writeError(
+                sprintf('  - <warning>Could not write deploy manifest at %s</warning>', $this->manifestPath())
+            );
+        }
+
         // ── Refresh .gitignore core block ─────────────────────────────────────
         $this->gitignoreManager->updateCoreBlock(
             $projectRoot,
             $webRoot,
             $deployed,
-            $this->vendorDir
+            $this->paths->vendorDir()
         );
     }
 
     // -------------------------------------------------------------------------
-    // Helpers: path resolution
+    // Helpers: deploy manifest / stale files
     // -------------------------------------------------------------------------
 
-    private function resolveWebRoot(string $projectRoot): string
+    private function manifestPath(): string
     {
-        $extra  = $this->composer->getPackage()->getExtra();
-        $rawDir = $extra['wordpress-install-dir'] ?? 'public';
+        return $this->vendorDir . '/.wordpress-core-staging/.deploy-manifest.json';
+    }
 
-        if ($rawDir === '.') {
-            return $projectRoot;
+    /**
+     * @param string[] $protected
+     * @param string[] $skipIfExists
+     */
+    private function manifestFor(
+        PackageInterface $package,
+        string $webRoot,
+        array $protected,
+        array $skipIfExists
+    ): DeployManifest {
+        return new DeployManifest(
+            $package->getName(),
+            $package->getVersion(),
+            (string) ($package->getDistReference() ?? $package->getSourceReference() ?? ''),
+            $webRoot,
+            sha1((string) json_encode([$protected, $skipIfExists]))
+        );
+    }
+
+    /**
+     * Delete files recorded by the previous deploy that the current core no
+     * longer ships, then prune directories left empty. Mirrors what
+     * WordPress's own updater does with $_old_files.
+     *
+     * Never touches protected or skip-if-exists paths, and does nothing when
+     * there is no previous manifest or the web-root has moved.
+     *
+     * @param string[] $shipped      Always-synced files in the current source.
+     * @param string[] $protected
+     * @param string[] $skipIfExists
+     */
+    private function removeStaleFiles(
+        DeployManifest $current,
+        array $shipped,
+        array $protected,
+        array $skipIfExists
+    ): void {
+        $previous = DeployManifest::load($this->manifestPath());
+
+        if ($previous === null) {
+            return;
         }
 
-        if (str_starts_with($rawDir, '/')) {
-            return $rawDir;
+        if ($previous->webRoot !== $current->webRoot) {
+            $this->io->write(
+                sprintf(
+                    '  - <comment>Web-root changed since last deploy</comment> (%s); not removing stale files.',
+                    $previous->webRoot
+                ),
+                true,
+                IOInterface::VERBOSE
+            );
+            return;
         }
 
-        return $projectRoot . DIRECTORY_SEPARATOR . $rawDir;
+        $removed = 0;
+
+        foreach (array_diff($previous->files, $shipped) as $file) {
+            if (
+                str_starts_with($file, '/')
+                || in_array('..', explode('/', $file), true)
+                || $this->isProtected($file, $protected)
+                || $this->isSkipIfExists($file, $skipIfExists)
+            ) {
+                continue;
+            }
+
+            $absolute = $current->webRoot . '/' . $file;
+
+            if (!is_file($absolute) || !@unlink($absolute)) {
+                continue;
+            }
+
+            $this->io->write(sprintf('  - <comment>Removed stale:</comment> %s', $file), true, IOInterface::VERBOSE);
+            $this->pruneEmptyDirectories(dirname($absolute), $current->webRoot);
+            $removed++;
+        }
+
+        if ($removed > 0) {
+            $this->io->write(
+                sprintf('  - Removed <comment>%d stale file(s)</comment> no longer shipped by core.', $removed)
+            );
+        }
+    }
+
+    /**
+     * Remove $dir and its parents while they are empty, stopping at $webRoot.
+     */
+    private function pruneEmptyDirectories(string $dir, string $webRoot): void
+    {
+        while (
+            str_starts_with($dir, $webRoot . '/')
+            && is_dir($dir)
+            && $this->filesystem->isDirEmpty($dir)
+            && @rmdir($dir)
+        ) {
+            $dir = dirname($dir);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -432,8 +584,7 @@ class CoreInstaller extends LibraryInstaller
     /** @return string[] */
     private function buildProtectedList(): array
     {
-        $extra     = $this->composer->getPackage()->getExtra();
-        $userExtra = (array) ($extra['wp-core-installer']['protected-paths'] ?? []);
+        $userExtra = $this->paths->configStringList('protected-paths');
 
         return array_values(
             array_unique(
@@ -448,8 +599,7 @@ class CoreInstaller extends LibraryInstaller
     /** @return string[] */
     private function buildSkipIfExistsList(): array
     {
-        $extra     = $this->composer->getPackage()->getExtra();
-        $userExtra = (array) ($extra['wp-core-installer']['skip-if-exists'] ?? []);
+        $userExtra = $this->paths->configStringList('skip-if-exists');
 
         return array_values(
             array_unique(
@@ -483,6 +633,7 @@ class CoreInstaller extends LibraryInstaller
     // Helpers: filesystem iteration
     // -------------------------------------------------------------------------
 
+    /** @return \RecursiveIteratorIterator<\RecursiveDirectoryIterator> */
     private function createIterator(string $baseDir): \RecursiveIteratorIterator
     {
         return new \RecursiveIteratorIterator(

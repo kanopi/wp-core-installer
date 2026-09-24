@@ -114,3 +114,31 @@ setup() {
   [ "$status" -eq 0 ]
   [ -f "${PROJ}/web/wp-admin/index.php" ]
 }
+
+# Removing core strips the core .gitignore block but leaves the live
+# web-root alone (a site may be running there).
+@test "composer remove of core keeps web-root files and strips the core block" {
+  run install_core
+  [ "$status" -eq 0 ]
+
+  run composer_in_project remove fake/wordpress-core
+  [ "$status" -eq 0 ]
+
+  [ -f "${PROJ}/web/wp-admin/index.php" ]
+  [ ! -d "${PROJ}/vendor/.wordpress-core-staging/fake/wordpress-core" ]
+  ! grep -q 'wp-core-installer:core:begin' "${PROJ}/.gitignore"
+  grep -q 'wp-core-installer:packages:begin' "${PROJ}/.gitignore"
+}
+
+# CI deploy shape: a production build from the lock file on a clean checkout.
+@test "composer install --no-dev --no-scripts from a lock file deploys core" {
+  run install_core
+  [ "$status" -eq 0 ]
+  rm -rf "${PROJ}/vendor" "${PROJ}/web"
+
+  run composer_in_project install --no-dev --no-scripts
+  [ "$status" -eq 0 ]
+
+  [ -f "${PROJ}/web/wp-admin/index.php" ]
+  [ -f "${PROJ}/web/wp-content/mu-plugins/000-autoloader.php" ]
+}

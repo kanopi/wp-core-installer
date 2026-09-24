@@ -54,23 +54,42 @@ class GitignoreManager
      */
     private const BLOCK_HEADER = '# Managed by kanopi/wp-core-installer — do not edit this block manually.';
 
-    private const CORE_NEVER_IGNORE = [
-        // Project manifests — must always be tracked.
-        'composer.json',
-        'composer.lock',
-        // wp-content is excluded; individual managed packages within it are
-        // handled separately in the packages block.
+    /**
+     * Top-level web-root directories that also hold project-owned files
+     * (themes, plugins, uploads, …). Deployed core files inside them are
+     * listed individually instead of ignoring the whole directory, so
+     * unmanaged siblings stay tracked.
+     */
+    private const PARTIALLY_MANAGED_DIRS = [
         'wp-content',
-        // User-configurable server config and WP reference file.
-        '.htaccess',
-        // The mu-plugins directory is excluded — the autoloader mu-plugin and
-        // any user-owned files inside it must remain tracked.  The vendor dir
-        // inside mu-plugins is covered in the packages block.
-        'wp-content/mu-plugins',
     ];
 
-    public function __construct(private readonly IOInterface $io)
+    /**
+     * @param array<mixed> $pluginConfig The root package's extra.wp-core-installer array.
+     */
+    public function __construct(
+        private IOInterface $io,
+        private array $pluginConfig = []
+    ) {
+    }
+
+    /**
+     * Whether the given block ("core" or "packages") is managed.
+     *
+     * extra.wp-core-installer.manage-gitignore accepts:
+     *   true / omitted              → both blocks managed (default)
+     *   false                       → neither block managed
+     *   {"core": false, ...}        → per-block; unlisted blocks default to true
+     */
+    public function isBlockManaged(string $blockId): bool
     {
+        $setting = $this->pluginConfig['manage-gitignore'] ?? true;
+
+        if (is_array($setting)) {
+            return (bool) ($setting[$blockId] ?? true);
+        }
+
+        return (bool) $setting;
     }
 
     // -------------------------------------------------------------------------
@@ -83,8 +102,8 @@ class GitignoreManager
      * @param string              $projectRoot   Absolute path to the project root.
      * @param string   $webRoot       Absolute path where WP core was deployed.
      * @param string[] $deployedFiles Normalised relative paths (from web-root) of every
-     *                                file written during deployment, including skip-if-exists
-     *                                files that already existed on disk.
+     *                                always-synced core file written during deployment
+     *                                (skip-if-exists files are excluded).
      * @param string   $vendorDirAbs  Absolute path to the Composer vendor dir.
      */
     public function updateCoreBlock(
@@ -93,8 +112,10 @@ class GitignoreManager
         array $deployedFiles,
         string $vendorDirAbs
     ): void {
-        $lines = $this->buildCoreBlockLines($projectRoot, $webRoot, $deployedFiles, $vendorDirAbs);
-        $this->writeBlock($projectRoot, 'core', $lines);
+        if (!$this->skipUnmanaged($projectRoot, 'core')) {
+            $lines = $this->buildCoreBlockLines($projectRoot, $webRoot, $deployedFiles, $vendorDirAbs);
+            $this->writeBlock($projectRoot, 'core', $lines);
+        }
     }
 
     /**
@@ -124,8 +145,10 @@ class GitignoreManager
         array $byType,
         ?string $muPluginFileAbs = null
     ): void {
-        $lines = $this->buildPackagesBlockLines($projectRoot, $vendorDirAbs, $byType, $muPluginFileAbs);
-        $this->writeBlock($projectRoot, 'packages', $lines);
+        if (!$this->skipUnmanaged($projectRoot, 'packages')) {
+            $lines = $this->buildPackagesBlockLines($projectRoot, $vendorDirAbs, $byType, $muPluginFileAbs);
+            $this->writeBlock($projectRoot, 'packages', $lines);
+        }
     }
 
     /**
@@ -134,6 +157,26 @@ class GitignoreManager
     public function removePackagesBlock(string $projectRoot): void
     {
         $this->removeBlock($projectRoot, 'packages');
+    }
+
+    /**
+     * When a block is opted out, strip any copy left from before the opt-out
+     * (so its entries stop hiding files) and tell the caller to skip writing.
+     */
+    private function skipUnmanaged(string $projectRoot, string $blockId): bool
+    {
+        if ($this->isBlockManaged($blockId)) {
+            return false;
+        }
+
+        $this->io->write(
+            sprintf('  - <comment>.gitignore "%s" block not managed</comment> (manage-gitignore).', $blockId),
+            true,
+            IOInterface::VERBOSE
+        );
+        $this->removeBlock($projectRoot, $blockId);
+
+        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -146,9 +189,9 @@ class GitignoreManager
      * Collapses the deployed file list into the most concise set of gitignore
      * patterns that covers every deployed path exactly:
      *
-     *   - Top-level entries NOT in NEVER_IGNORE → emit as /name or /name/
+     *   - Top-level entries NOT in PARTIALLY_MANAGED_DIRS → emit as /name or /name/
      *     (one rule covers the whole directory tree)
-     *   - Top-level entries IN NEVER_IGNORE (e.g. wp-content) → emit only the
+     *   - Top-level entries IN PARTIALLY_MANAGED_DIRS (wp-content) → emit only the
      *     specific files that were deployed inside them, so unmanaged sibling
      *     files in the same directory remain tracked.
      *
@@ -162,14 +205,22 @@ class GitignoreManager
         array $deployedFiles,
         string $vendorDirAbs
     ): array {
-        $webPrefix       = $this->relativePrefix($projectRoot, $webRoot);
-        $vendorRelative  = $this->relativeToProject($projectRoot, $vendorDirAbs);
-        $stagingRelative = $vendorRelative . '/.wordpress-core-staging';
+        $webPrefix = $this->relativePrefix($projectRoot, $webRoot);
+        $lines     = [];
 
-        $lines   = [];
-        $lines[] = '';
-        $lines[] = '# WordPress core staging directory (Composer internal — do not commit)';
-        $lines[] = '/' . $stagingRelative . '/';
+        // Paths outside the project root cannot be expressed in the project's
+        // .gitignore (and are not in the repository anyway) — omit them.
+        if ($this->isInsideProject($projectRoot, $vendorDirAbs)) {
+            $vendorRelative = $this->relativeToProject($projectRoot, $vendorDirAbs);
+            $lines[] = '';
+            $lines[] = '# WordPress core staging directory (Composer internal — do not commit)';
+            $lines[] = '/' . $this->joinRelative($vendorRelative, '.wordpress-core-staging') . '/';
+        }
+
+        if (!$this->isInsideProject($projectRoot, $webRoot)) {
+            return $lines;
+        }
+
         $lines[] = '';
         $lines[] = '# WordPress core files (managed via Composer — do not commit)';
 
@@ -190,7 +241,7 @@ class GitignoreManager
         $entries = [];
 
         foreach ($groups as $segment => $paths) {
-            if (in_array($segment, self::CORE_NEVER_IGNORE, true)) {
+            if (in_array($segment, self::PARTIALLY_MANAGED_DIRS, true)) {
                 // Partially-managed directory: emit each deployed file explicitly
                 // so that unmanaged siblings stay tracked in git.
                 foreach ($paths as $path) {
@@ -207,7 +258,7 @@ class GitignoreManager
             }
         }
 
-        // De-duplicate (skip-if-exists files appear once, but be safe).
+        // De-duplicate (be safe).
         $entries = array_values(array_unique($entries));
         sort($entries);
 
@@ -228,12 +279,13 @@ class GitignoreManager
         array $byType,
         ?string $muPluginFileAbs = null
     ): array {
-        $vendorRelative = $this->relativeToProject($projectRoot, $vendorDirAbs);
+        $lines = [];
 
-        $lines   = [];
-        $lines[] = '';
-        $lines[] = '# Composer vendor directory';
-        $lines[] = '/' . $vendorRelative . '/';
+        if ($this->isInsideProject($projectRoot, $vendorDirAbs)) {
+            $lines[] = '';
+            $lines[] = '# Composer vendor directory';
+            $lines[] = '/' . $this->relativeToProject($projectRoot, $vendorDirAbs) . '/';
+        }
 
         // If the autoloader mu-plugin is managed, gitignore it — it is always
         // regenerated by Composer just like vendor/ itself.
@@ -252,6 +304,8 @@ class GitignoreManager
             'plugins'    => 'Composer-managed WordPress plugins',
             'themes'     => 'Composer-managed WordPress themes',
             'mu-plugins' => 'Composer-managed WordPress must-use plugins',
+            'dropins'    => 'Composer-managed WordPress drop-ins',
+            'languages'  => 'Composer-managed WordPress language packs',
         ];
 
         foreach ($headings as $typeKey => $heading) {
@@ -446,6 +500,25 @@ class GitignoreManager
         $rel = $this->relativeToProject($projectRoot, $absDir);
 
         return $rel === '' ? '' : $rel . '/';
+    }
+
+    /**
+     * True when $absPath is the project root or lies beneath it.
+     */
+    private function isInsideProject(string $projectRoot, string $absPath): bool
+    {
+        $projectRoot = rtrim(str_replace('\\', '/', $projectRoot), '/');
+        $absPath     = rtrim(str_replace('\\', '/', $absPath), '/');
+
+        return $absPath === $projectRoot || str_starts_with($absPath, $projectRoot . '/');
+    }
+
+    /**
+     * Join two relative path segments, tolerating an empty leading segment.
+     */
+    private function joinRelative(string $base, string $child): string
+    {
+        return $base === '' ? $child : $base . '/' . $child;
     }
 
     /**
