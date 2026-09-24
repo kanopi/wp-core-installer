@@ -88,6 +88,15 @@ class CoreInstaller extends LibraryInstaller
      * Never overwritten on `composer update` — user edits are preserved.
      * Never added to .gitignore; the user decides whether to track these.
      */
+    /**
+     * Built-in protected directories that deploy-bundled can open up for
+     * specific themes / plugins shipped with core.
+     */
+    private const BUNDLE_ROOTS = [
+        'wp-content/themes',
+        'wp-content/plugins',
+    ];
+
     private const SKIP_IF_EXISTS = [
         '.htaccess',
         'wp-config-sample.php',
@@ -369,6 +378,8 @@ class CoreInstaller extends LibraryInstaller
         $webRoot     = $this->paths->webRoot();
         $protected   = $this->buildProtectedList();
         $skipIfExist = $this->buildSkipIfExistsList();
+        $bundled     = $this->buildBundledList();
+        $userGuards  = $this->buildUserProtectedList();
         $plan        = new DeployPlan(
             $stagingPath,
             $webRoot,
@@ -403,7 +414,7 @@ class CoreInstaller extends LibraryInstaller
                 continue;
             }
 
-            if ($this->isProtected($relative, $protected)) {
+            if ($this->isProtectedPath($relative, $protected, $bundled, $userGuards)) {
                 $plan->protected[] = $relative;
                 continue;
             }
@@ -540,7 +551,7 @@ class CoreInstaller extends LibraryInstaller
             $package->getVersion(),
             (string) ($package->getDistReference() ?? $package->getSourceReference() ?? ''),
             $webRoot,
-            sha1((string) json_encode([$protected, $skipIfExists]))
+            sha1((string) json_encode([$protected, $skipIfExists, $this->buildBundledList()]))
         );
     }
 
@@ -576,13 +587,18 @@ class CoreInstaller extends LibraryInstaller
             return [];
         }
 
+        // Manifest entries under wp-content/themes or wp-content/plugins can
+        // only come from deploy-bundled, so a theme/plugin dropped from that
+        // list is cleaned up like any other stale core file. Files the
+        // project added there were never in a manifest and are untouched.
+        $guard = array_values(array_diff($protected, self::BUNDLE_ROOTS));
         $stale = [];
 
         foreach ($previous->filesRemovedIn($planned) as $file) {
             if (
                 $this->filesystem->isAbsolutePath($file)
                 || in_array('..', explode('/', $file), true)
-                || $this->isProtected($file, $protected)
+                || $this->isProtected($file, $guard)
                 || $this->isSkipIfExists($file, $skipIfExists)
                 || !is_file($planned->webRoot . '/' . $file)
             ) {
@@ -610,7 +626,12 @@ class CoreInstaller extends LibraryInstaller
     public function isAlwaysSynced(string $relative): bool
     {
         return !$this->isSkipIfExists($relative, $this->buildSkipIfExistsList())
-            && !$this->isProtected($relative, $this->buildProtectedList());
+            && !$this->isProtectedPath(
+                $relative,
+                $this->buildProtectedList(),
+                $this->buildBundledList(),
+                $this->buildUserProtectedList()
+            );
     }
 
     /**
@@ -659,6 +680,43 @@ class CoreInstaller extends LibraryInstaller
                     array_merge(self::SKIP_IF_EXISTS, $userExtra)
                 )
             )
+        );
+    }
+
+    /**
+     * Normalised deploy-bundled paths, e.g. "wp-content/themes/twentytwentyfive".
+     *
+     * @return string[]
+     */
+    private function buildBundledList(): array
+    {
+        return $this->paths->bundledPaths();
+    }
+
+    /**
+     * Protection with deploy-bundled applied: a bundled theme/plugin is
+     * always-synced even though its parent directory is protected, unless
+     * the project listed it in its own protected-paths.
+     *
+     * @param string[] $protected
+     * @param string[] $bundled
+     * @param string[] $userProtected The project's own protected-paths.
+     */
+    private function isProtectedPath(string $relative, array $protected, array $bundled, array $userProtected): bool
+    {
+        if ($this->isProtected($relative, $bundled) && !$this->isProtected($relative, $userProtected)) {
+            return false;
+        }
+
+        return $this->isProtected($relative, $protected);
+    }
+
+    /** @return string[] */
+    private function buildUserProtectedList(): array
+    {
+        return array_map(
+            static fn (string $p): string => trim(str_replace('\\', '/', $p), '/'),
+            $this->paths->configStringList('protected-paths')
         );
     }
 

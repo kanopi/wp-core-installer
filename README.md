@@ -93,6 +93,7 @@ and all other settings go under `extra.wp-core-installer` in your
 | `wordpress-install-dir` | string | `"public"` | Where core is deployed (the web-root). See [below](#wordpress-install-dir). |
 | `protected-paths` | string[] | `[]` | Extra paths, relative to the web-root, that are never copied, deleted or gitignored. Adds to the [built-in list](#built-in-protected-paths). |
 | `skip-if-exists` | string[] | `[]` | Extra paths that are copied on **first** install only and never overwritten or gitignored. Adds to the [built-in list](#built-in-skip-if-exists-paths). |
+| `deploy-bundled` | object | `{}` | Themes and plugins that ship with core to deploy anyway, e.g. `{"themes": ["twentytwentyfive"], "plugins": ["akismet", "hello.php"]}`. See [below](#bundled-themes-and-plugins). |
 | `manage-gitignore` | bool or object | `true` | `false` turns off both [managed blocks](#managed-gitignore-blocks). `{"core": false}` or `{"packages": false}` turns off one. |
 | `manage-mu-plugin-autoloader` | bool | `true` | `false` stops the plugin from writing (and gitignoring) the [autoloader mu-plugin](#autoloader-mu-plugin). |
 | `mu-plugins-dir` | string | `"wp-content/mu-plugins"` | The mu-plugins directory, **relative to the web-root**, or absolute. |
@@ -240,12 +241,46 @@ Relative to the web-root. A directory protects everything inside it.
 |---|---|
 | `composer.json`, `composer.lock` | Project manifests |
 | `wp-config.php` | WordPress runtime config |
-| `wp-content/themes`, `wp-content/plugins`, `wp-content/mu-plugins` | Project-owned code (bundled default themes and plugins are not deployed) |
+| `wp-content/themes`, `wp-content/plugins`, `wp-content/mu-plugins` | Project-owned code (bundled default themes and plugins are only deployed if listed in [`deploy-bundled`](#bundled-themes-and-plugins)) |
 | `wp-content/uploads` | User-uploaded media |
 | `wp-content/upgrade`, `wp-content/languages` | Directories WordPress manages |
 | `.env`, `.env.local`, `.env.staging`, `.env.production` | Environment and secrets |
 | `.git`, `.gitignore`, `.gitattributes`, `.editorconfig` | VCS and editor files |
 | `node_modules`, `vendor` | Other dependency trees |
+
+### Bundled themes and plugins
+
+WordPress ships default themes and plugins, such as `twentytwentyfive`,
+Akismet and Hello Dolly. Because `wp-content/themes` and `wp-content/plugins`
+are protected, none of them is deployed unless you ask:
+
+```json
+"extra": {
+    "wp-core-installer": {
+        "deploy-bundled": {
+            "themes": ["twentytwentyfive"],
+            "plugins": ["akismet", "hello.php"]
+        }
+    }
+}
+```
+
+- **Naming:** use the name as it appears in `wp-content/themes` or
+  `wp-content/plugins`. That's a directory, or a file for single-file
+  plugins like `hello.php`.
+- **Listed items** are always-synced like other core files. They're updated
+  with core, and each one is gitignored as a single entry (for example
+  `/web/wp-content/themes/twentytwentyfive/`).
+- **Dropping an item** from the list deletes the files the plugin deployed
+  for it on the next `composer install`. Files you added inside that folder
+  are kept. Run `composer wp-core:deploy --dry-run` first to see exactly
+  what will be removed.
+- **Your own `protected-paths` win.** Listing
+  `wp-content/plugins/akismet` there keeps Akismet untouched even if it's
+  also bundled.
+
+A common use is keeping the latest default theme available as a fallback,
+so WordPress still has a theme to load if the active one goes missing.
 
 ### Built-in skip-if-exists paths
 

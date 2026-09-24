@@ -68,6 +68,25 @@ final class GitignoreManagerTest extends TestCase
         ], $this->entries('core'));
     }
 
+    public function testBundledThemesAndPluginsCollapseToOneEntryEach(): void
+    {
+        $this->writeCore($this->manager(), [
+            'wp-content/index.php',
+            'wp-content/themes/twentytwentyfive/style.css',
+            'wp-content/themes/twentytwentyfive/parts/header.html',
+            'wp-content/plugins/akismet/akismet.php',
+            'wp-content/plugins/hello.php',
+        ]);
+
+        self::assertSame([
+            '/vendor/.wordpress-core-staging/',
+            '/web/wp-content/index.php',
+            '/web/wp-content/plugins/akismet/',
+            '/web/wp-content/plugins/hello.php',
+            '/web/wp-content/themes/twentytwentyfive/',
+        ], $this->entries('core'));
+    }
+
     public function testCoreBlockWithProjectRootAsWebRoot(): void
     {
         $this->writeCore($this->manager(), ['wp-admin/index.php', 'wp-load.php'], '');
