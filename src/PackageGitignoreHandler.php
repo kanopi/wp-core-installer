@@ -59,8 +59,9 @@ class PackageGitignoreHandler
      */
     public function handle(): void
     {
-        $projectRoot  = (string) getcwd();
-        $vendorDirAbs = (string) $this->composer->getConfig()->get('vendor-dir');
+        $paths        = new ProjectPaths($this->composer);
+        $projectRoot  = $paths->projectRoot();
+        $vendorDirAbs = $paths->vendorDir();
 
         // Ask the scaffolder for the managed file path (null when opt-out).
         // The file does not need to exist yet — we gitignore it by path so
