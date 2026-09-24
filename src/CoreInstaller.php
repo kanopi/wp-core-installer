@@ -86,7 +86,7 @@ class CoreInstaller extends LibraryInstaller
     /**
      * Paths copied on FIRST install only (destination must not yet exist).
      * Never overwritten on `composer update` — user edits are preserved.
-     * Not added to .gitignore; the user decides whether to track these.
+     * Never added to .gitignore; the user decides whether to track these.
      */
     private const SKIP_IF_EXISTS = [
         '.htaccess',
@@ -333,7 +333,13 @@ class CoreInstaller extends LibraryInstaller
 
         $copied   = 0;
         $skipped  = 0;
-        /** @var string[] $deployed  Normalised relative paths of every file written. */
+        /**
+         * Normalised relative paths of every always-synced core file written.
+         * Skip-if-exists files are deliberately excluded: they belong to the
+         * project after first install, so they are never gitignored.
+         *
+         * @var string[] $deployed
+         */
         $deployed = [];
 
         /** @var \SplFileInfo $item */
@@ -346,7 +352,9 @@ class CoreInstaller extends LibraryInstaller
             // Checked BEFORE always-protected so that specific files listed in
             // SKIP_IF_EXISTS (e.g. wp-content/themes/index.php) can pass through
             // even when their parent directory is in ALWAYS_PROTECTED.
-            if ($this->isSkipIfExists($normalised, $skipIfExist)) {
+            $isSkipIfExists = $this->isSkipIfExists($normalised, $skipIfExist);
+
+            if ($isSkipIfExists) {
                 if (file_exists($destination)) {
                     $this->io->write(
                         sprintf('  - <comment>Skipping (exists):</comment> %s', $normalised),
@@ -354,10 +362,6 @@ class CoreInstaller extends LibraryInstaller
                         IOInterface::VERBOSE
                     );
                     $skipped++;
-                    // Still record it — the file is on disk and managed by us.
-                    if (!$item->isDir()) {
-                        $deployed[] = $normalised;
-                    }
                     continue;
                 }
                 // Falls through to tier 3 (deploy) below.
@@ -385,7 +389,9 @@ class CoreInstaller extends LibraryInstaller
                     sprintf('  - <e>Failed to copy:</e> %s → %s', $item->getRealPath(), $destination)
                 );
             } else {
-                $deployed[] = $normalised;
+                if (!$isSkipIfExists) {
+                    $deployed[] = $normalised;
+                }
                 $copied++;
             }
         }
