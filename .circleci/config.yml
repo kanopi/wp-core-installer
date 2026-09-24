@@ -1,5 +1,8 @@
 version: 2.1
 
+orbs:
+  win: circleci/windows@5.0
+
 # CI for kanopi/wp-core-installer.
 #
 # quality:   coding standards (PHPCS, PSR-12) and static analysis (PHPStan).
@@ -9,6 +12,9 @@ version: 2.1
 # The integration suite drives the real composer binary against fixture path
 # packages; it installs composer/installers from this repo's vendor/ as an
 # offline path repository, so `composer install` must run first.
+#
+# test-windows: the same unit + integration suites on Windows (Git Bash), so
+#               drive letters and backslash paths are exercised (#22).
 
 executors:
   php:
@@ -71,10 +77,56 @@ jobs:
           name: Integration tests (bats)
           command: bats --print-output-on-failure --timing tests/integration/
 
+  test-windows:
+    executor:
+      name: win/default
+      shell: bash.exe
+    environment:
+      PHP_VERSION: "8.3"
+    steps:
+      - checkout
+      - run:
+          name: Install PHP and Composer
+          command: |
+            mkdir -p /c/tools/php /c/tools/bin
+            curl -fsSL -o /c/tools/php.zip \
+              "https://windows.php.net/downloads/releases/latest/php-${PHP_VERSION}-nts-Win32-vs16-x64-latest.zip"
+            powershell -NoProfile -Command "Expand-Archive -Force C:/tools/php.zip C:/tools/php"
+            cp /c/tools/php/php.ini-development /c/tools/php/php.ini
+            {
+              echo 'extension_dir = "ext"'
+              for ext in curl fileinfo mbstring openssl zip; do echo "extension=${ext}"; done
+            } >> /c/tools/php/php.ini
+            echo 'export PATH="/c/tools/php:/c/tools/bin:$PATH"' >> "$BASH_ENV"
+            export PATH="/c/tools/php:/c/tools/bin:$PATH"
+            curl -fsSL -o /c/tools/composer.phar https://getcomposer.org/download/latest-stable/composer.phar
+            printf '#!/usr/bin/env bash\nexec php "C:/tools/composer.phar" "$@"\n' > /c/tools/bin/composer
+            chmod +x /c/tools/bin/composer
+            php --version
+            composer --version
+      - run:
+          name: Install dev dependencies
+          command: composer install --no-interaction --no-progress
+      - run:
+          name: Unit tests (PHPUnit)
+          command: composer test:unit
+      - run:
+          name: Install bats-core
+          command: |
+            git clone --depth 1 --branch v1.11.0 https://github.com/bats-core/bats-core.git /c/tools/bats-core
+            ln -s /c/tools/bats-core/bin/bats /c/tools/bin/bats 2>/dev/null \
+              || printf '#!/usr/bin/env bash\nexec /c/tools/bats-core/bin/bats "$@"\n' > /c/tools/bin/bats
+            chmod +x /c/tools/bin/bats
+            bats --version
+      - run:
+          name: Integration tests (bats)
+          command: bats --print-output-on-failure --timing tests/integration/
+
 workflows:
   ci:
     jobs:
       - quality
+      - test-windows
       - test:
           matrix:
             parameters:
