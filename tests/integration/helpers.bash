@@ -102,3 +102,11 @@ make_wp_package() {
 JSON
   printf '<?php // %s\n' "$name" > "${dir}/main.php"
 }
+
+# Publish a new version of the fake core package and update to it.
+# Make any file changes under ${CORE} before calling.
+update_core_to() {
+  sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$1\"/" "${CORE}/composer.json"
+  rm -f "${CORE}/composer.json.bak"
+  composer_in_project update fake/wordpress-core
+}

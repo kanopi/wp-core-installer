@@ -341,6 +341,14 @@ class CoreInstaller extends LibraryInstaller
          * @var string[] $deployed
          */
         $deployed = [];
+        /**
+         * Every always-synced file the source ships, copied or not. Stale-file
+         * detection diffs against this (not $deployed) so a failed copy is
+         * never mistaken for a file core dropped.
+         *
+         * @var string[] $shipped
+         */
+        $shipped = [];
 
         /** @var \SplFileInfo $item */
         foreach ($this->createIterator($stagingPath) as $item) {
@@ -382,6 +390,10 @@ class CoreInstaller extends LibraryInstaller
                 continue;
             }
 
+            if (!$isSkipIfExists) {
+                $shipped[] = $normalised;
+            }
+
             $this->filesystem->ensureDirectoryExists(dirname($destination));
 
             if (copy($item->getRealPath(), $destination) === false) {
@@ -404,6 +416,16 @@ class CoreInstaller extends LibraryInstaller
             )
         );
 
+        // ── Remove files the previous core shipped but this one does not ──────
+        $manifest = $this->manifestFor($package, $webRoot, $protected, $skipIfExist)->withFiles($deployed);
+        $this->removeStaleFiles($manifest, $shipped, $protected, $skipIfExist);
+
+        if (!$manifest->save($this->manifestPath())) {
+            $this->io->writeError(
+                sprintf('  - <warning>Could not write deploy manifest at %s</warning>', $this->manifestPath())
+            );
+        }
+
         // ── Refresh .gitignore core block ─────────────────────────────────────
         $this->gitignoreManager->updateCoreBlock(
             $projectRoot,
@@ -411,6 +433,115 @@ class CoreInstaller extends LibraryInstaller
             $deployed,
             $this->paths->vendorDir()
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers: deploy manifest / stale files
+    // -------------------------------------------------------------------------
+
+    private function manifestPath(): string
+    {
+        return $this->vendorDir . '/.wordpress-core-staging/.deploy-manifest.json';
+    }
+
+    /**
+     * @param string[] $protected
+     * @param string[] $skipIfExists
+     */
+    private function manifestFor(
+        PackageInterface $package,
+        string $webRoot,
+        array $protected,
+        array $skipIfExists
+    ): DeployManifest {
+        return new DeployManifest(
+            $package->getName(),
+            $package->getVersion(),
+            (string) ($package->getDistReference() ?? $package->getSourceReference() ?? ''),
+            $webRoot,
+            sha1((string) json_encode([$protected, $skipIfExists]))
+        );
+    }
+
+    /**
+     * Delete files recorded by the previous deploy that the current core no
+     * longer ships, then prune directories left empty. Mirrors what
+     * WordPress's own updater does with $_old_files.
+     *
+     * Never touches protected or skip-if-exists paths, and does nothing when
+     * there is no previous manifest or the web-root has moved.
+     *
+     * @param string[] $shipped      Always-synced files in the current source.
+     * @param string[] $protected
+     * @param string[] $skipIfExists
+     */
+    private function removeStaleFiles(
+        DeployManifest $current,
+        array $shipped,
+        array $protected,
+        array $skipIfExists
+    ): void {
+        $previous = DeployManifest::load($this->manifestPath());
+
+        if ($previous === null) {
+            return;
+        }
+
+        if ($previous->webRoot !== $current->webRoot) {
+            $this->io->write(
+                sprintf(
+                    '  - <comment>Web-root changed since last deploy</comment> (%s); not removing stale files.',
+                    $previous->webRoot
+                ),
+                true,
+                IOInterface::VERBOSE
+            );
+            return;
+        }
+
+        $removed = 0;
+
+        foreach (array_diff($previous->files, $shipped) as $file) {
+            if (
+                str_starts_with($file, '/')
+                || in_array('..', explode('/', $file), true)
+                || $this->isProtected($file, $protected)
+                || $this->isSkipIfExists($file, $skipIfExists)
+            ) {
+                continue;
+            }
+
+            $absolute = $current->webRoot . '/' . $file;
+
+            if (!is_file($absolute) || !@unlink($absolute)) {
+                continue;
+            }
+
+            $this->io->write(sprintf('  - <comment>Removed stale:</comment> %s', $file), true, IOInterface::VERBOSE);
+            $this->pruneEmptyDirectories(dirname($absolute), $current->webRoot);
+            $removed++;
+        }
+
+        if ($removed > 0) {
+            $this->io->write(
+                sprintf('  - Removed <comment>%d stale file(s)</comment> no longer shipped by core.', $removed)
+            );
+        }
+    }
+
+    /**
+     * Remove $dir and its parents while they are empty, stopping at $webRoot.
+     */
+    private function pruneEmptyDirectories(string $dir, string $webRoot): void
+    {
+        while (
+            str_starts_with($dir, $webRoot . '/')
+            && is_dir($dir)
+            && $this->filesystem->isDirEmpty($dir)
+            && @rmdir($dir)
+        ) {
+            $dir = dirname($dir);
+        }
     }
 
     // -------------------------------------------------------------------------
