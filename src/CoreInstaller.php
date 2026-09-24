@@ -112,8 +112,8 @@ class CoreInstaller extends LibraryInstaller
         ?BinaryInstaller $binaryInstaller = null
     ) {
         parent::__construct($io, $composer, $type, $filesystem, $binaryInstaller);
-        $this->gitignoreManager = new GitignoreManager($io);
         $this->paths            = new ProjectPaths($composer);
+        $this->gitignoreManager = new GitignoreManager($io, $this->paths->pluginConfig());
     }
 
     // -------------------------------------------------------------------------
