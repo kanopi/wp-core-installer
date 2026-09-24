@@ -90,6 +90,7 @@ and all other settings go under `extra.wp-core-installer` in your
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
+| `preset` | string | *(none)* | Host defaults: `pantheon` or `wpengine`. See [Host presets](#host-presets). |
 | `wordpress-install-dir` | string | `"public"` | Where core is deployed (the web-root). See [below](#wordpress-install-dir). |
 | `protected-paths` | string[] | `[]` | Extra paths, relative to the web-root, that are never copied, deleted or gitignored. Adds to the [built-in list](#built-in-protected-paths). |
 | `skip-if-exists` | string[] | `[]` | Extra paths that are copied on **first** install only and never overwritten or gitignored. Adds to the [built-in list](#built-in-skip-if-exists-paths). |
@@ -104,6 +105,30 @@ setting, for example:
 ```
 WP Core Installer: extra.wp-core-installer.protected-paths in composer.json must be an array of strings.
 ```
+
+### Host presets
+
+A preset fills in the settings a host's usual setup needs:
+
+```json
+"extra": {
+    "wp-core-installer": { "preset": "pantheon" }
+}
+```
+
+| Preset | `wordpress-install-dir` | Other settings | For |
+|---|---|---|---|
+| `pantheon` | `web` | `manage-gitignore: false` | Pantheon with `web_docroot: true` and build-artifact deploys (`terminus build:env:push`), which commit core and plugins to the Pantheon repo |
+| `wpengine` | `.` | none | WP Engine, where the repository root is the WordPress root |
+
+**Your own settings always win.** A preset only fills in settings you
+haven't set. `wordpress-install-dir` from the preset applies only if you
+omit it. For list settings (`protected-paths`, `skip-if-exists`), your
+entries are added to the preset's rather than replacing them.
+
+On Pantheon with **Integrated Composer**, where Composer runs on Pantheon
+and core must not be committed, use the preset but set
+`"manage-gitignore": true`.
 
 ### `wordpress-install-dir`
 

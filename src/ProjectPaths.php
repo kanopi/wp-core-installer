@@ -61,7 +61,9 @@ class ProjectPaths
     public function webRoot(): string
     {
         $raw = self::requireString(
-            $this->composer->getPackage()->getExtra()['wordpress-install-dir'] ?? self::DEFAULT_INSTALL_DIR,
+            $this->composer->getPackage()->getExtra()['wordpress-install-dir']
+                ?? $this->preset()['install-dir']
+                ?? self::DEFAULT_INSTALL_DIR,
             'extra.wordpress-install-dir'
         );
 
@@ -89,11 +91,35 @@ class ProjectPaths
     }
 
     /**
-     * The extra.wp-core-installer config array from the root package.
+     * The effective extra.wp-core-installer settings: the root package's
+     * own values, with the selected preset's defaults filled in underneath.
      *
      * @return array<mixed>
      */
     public function pluginConfig(): array
+    {
+        $config = $this->rawPluginConfig();
+        $preset = $this->preset();
+
+        return $preset === null ? $config : Presets::merge($config, $preset['settings']);
+    }
+
+    /**
+     * The selected preset (extra.wp-core-installer.preset), or null.
+     *
+     * @return array{description: string, install-dir?: string, settings: array<string, mixed>}|null
+     */
+    public function preset(): ?array
+    {
+        $name = $this->rawPluginConfig()['preset'] ?? null;
+
+        return $name === null ? null : Presets::get(self::requireString($name, 'extra.wp-core-installer.preset'));
+    }
+
+    /**
+     * @return array<mixed>
+     */
+    private function rawPluginConfig(): array
     {
         $config = $this->composer->getPackage()->getExtra()['wp-core-installer'] ?? [];
 
