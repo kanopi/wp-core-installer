@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<ruleset name="kanopi/wp-core-installer">
+    <description>PSR-12 for the plugin source and unit tests.</description>
+    <file>src</file>
+    <file>tests/Unit</file>
+    <arg name="colors"/>
+    <arg value="sp"/>
+    <rule ref="PSR12"/>
+</ruleset>

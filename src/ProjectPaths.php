@@ -60,9 +60,12 @@ class ProjectPaths
      */
     public function webRoot(): string
     {
-        $raw = $this->composer->getPackage()->getExtra()['wordpress-install-dir'] ?? self::DEFAULT_INSTALL_DIR;
+        $raw = self::requireString(
+            $this->composer->getPackage()->getExtra()['wordpress-install-dir'] ?? self::DEFAULT_INSTALL_DIR,
+            'extra.wordpress-install-dir'
+        );
 
-        return $this->resolve($this->projectRoot(), (string) $raw);
+        return $this->resolve($this->projectRoot(), $raw);
     }
 
     /**
@@ -70,9 +73,9 @@ class ProjectPaths
      */
     public function muPluginsDir(): string
     {
-        $raw = $this->pluginConfig()['mu-plugins-dir'] ?? self::DEFAULT_MU_PLUGINS_DIR;
+        $raw = $this->configString('mu-plugins-dir', self::DEFAULT_MU_PLUGINS_DIR);
 
-        return $this->resolve($this->webRoot(), (string) $raw);
+        return $this->resolve($this->webRoot(), $raw);
     }
 
     /**
@@ -80,7 +83,7 @@ class ProjectPaths
      */
     public function vendorDir(): string
     {
-        $raw = (string) $this->composer->getConfig()->get('vendor-dir');
+        $raw = self::requireString($this->composer->getConfig()->get('vendor-dir'), 'config.vendor-dir');
 
         return $this->resolve($this->projectRoot(), $raw);
     }
@@ -88,11 +91,69 @@ class ProjectPaths
     /**
      * The extra.wp-core-installer config array from the root package.
      *
-     * @return array<string, mixed>
+     * @return array<mixed>
      */
     public function pluginConfig(): array
     {
-        return (array) ($this->composer->getPackage()->getExtra()['wp-core-installer'] ?? []);
+        $config = $this->composer->getPackage()->getExtra()['wp-core-installer'] ?? [];
+
+        if (!is_array($config)) {
+            throw new \UnexpectedValueException(
+                'WP Core Installer: extra.wp-core-installer in composer.json must be an object.'
+            );
+        }
+
+        return $config;
+    }
+
+    /**
+     * A string setting from extra.wp-core-installer, or $default when unset.
+     */
+    public function configString(string $key, string $default): string
+    {
+        return self::requireString($this->pluginConfig()[$key] ?? $default, 'extra.wp-core-installer.' . $key);
+    }
+
+    /**
+     * A list-of-strings setting from extra.wp-core-installer ([] when unset).
+     *
+     * @return string[]
+     */
+    public function configStringList(string $key): array
+    {
+        $value = $this->pluginConfig()[$key] ?? [];
+        $label = 'extra.wp-core-installer.' . $key;
+
+        if (!is_array($value)) {
+            throw new \UnexpectedValueException(
+                sprintf('WP Core Installer: %s in composer.json must be an array of strings.', $label)
+            );
+        }
+
+        return array_values(array_map(
+            static fn (mixed $item): string => self::requireString($item, $label . '[]'),
+            $value
+        ));
+    }
+
+    /**
+     * Reject non-string config values with a message naming the setting,
+     * instead of letting them surface later as a TypeError or an
+     * "Array to string conversion" warning.
+     */
+    private static function requireString(mixed $value, string $label): string
+    {
+        if (!is_string($value)) {
+            throw new \UnexpectedValueException(
+                sprintf(
+                    'WP Core Installer: %s in composer.json must be a string, %s given.',
+                    $label,
+                    get_debug_type($value)
+                )
+            );
+        }
+
+        return $value;
     }
 
     /**

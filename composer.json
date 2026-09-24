@@ -9,7 +9,10 @@
     },
     "require-dev": {
         "composer/composer": "^2.0",
-        "composer/installers": "^2.0"
+        "composer/installers": "^2.0",
+        "phpunit/phpunit": "^9.6",
+        "phpstan/phpstan": "^2.1",
+        "squizlabs/php_codesniffer": "^3.10"
     },
     "conflict": {
         "fancyguy/webroot-installer": "*",
@@ -21,11 +24,35 @@
             "Kanopi\\Composer\\WordPress\\": "src/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Kanopi\\Composer\\WordPress\\Tests\\": "tests/Unit/"
+        }
+    },
     "scripts": {
-        "test": "bats tests/integration/"
+        "test": [
+            "@test:unit",
+            "@test:integration"
+        ],
+        "test:unit": "phpunit",
+        "test:integration": "bats tests/integration/",
+        "analyse": "phpstan analyse --no-progress",
+        "lint": "phpcs",
+        "lint:fix": "phpcbf",
+        "check": [
+            "@lint",
+            "@analyse",
+            "@test"
+        ]
     },
     "scripts-descriptions": {
-        "test": "Run the bats integration suite (requires bats-core and the composer binary on PATH)."
+        "test": "Run the unit and integration suites.",
+        "test:unit": "Run the PHPUnit unit tests.",
+        "test:integration": "Run the bats integration suite (requires bats-core and the composer binary on PATH).",
+        "analyse": "Run PHPStan static analysis.",
+        "lint": "Check coding standards (PSR-12).",
+        "lint:fix": "Fix coding-standard violations that can be fixed automatically.",
+        "check": "Run lint, static analysis and all tests."
     },
     "extra": {
         "class": "Kanopi\\Composer\\WordPress\\Plugin"
