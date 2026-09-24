@@ -20,7 +20,7 @@ setup_project() {
   CORE="${WORK}/fake-core"
   PROJ="${WORK}/project"
   mkdir -p "${CORE}/wp-admin" "${CORE}/wp-includes" \
-           "${CORE}/wp-content/themes/twentytwentyfive" "${PROJ}"
+           "${CORE}/wp-content/themes/twentytwentyfive" "${PROJ}" "${WORK}/fixtures"
 
   # Fake wordpress-core package ------------------------------------------------
   cat > "${CORE}/composer.json" <<EOF
@@ -48,10 +48,12 @@ EOF
     "repositories": {
         "packagist.org": false,
         "core":   { "type": "path", "url": "../fake-core", "options": { "symlink": false } },
-        "plugin": { "type": "path", "url": "${REPO_ROOT}",  "options": { "symlink": false } }
+        "plugin": { "type": "path", "url": "${REPO_ROOT}",  "options": { "symlink": false } },
+        "installers": { "type": "path", "url": "${REPO_ROOT}/vendor/composer/installers", "options": { "symlink": false, "versions": { "composer/installers": "2.99.0" } } },
+        "fixtures": { "type": "path", "url": "../fixtures/*", "options": { "symlink": false } }
     },
     "require": {},
-    "config": { "allow-plugins": { "kanopi/wp-core-installer": true } },
+    "config": { "allow-plugins": { "kanopi/wp-core-installer": true, "composer/installers": true } },
     "extra": { "wordpress-install-dir": "web" }
 }
 EOF
@@ -85,4 +87,18 @@ set_extra() {
 # Install core + this plugin together (the common fresh-install shape).
 install_core() {
   composer_in_project require "kanopi/wp-core-installer:*" "fake/wordpress-core:*"
+}
+
+# Create a fixture WordPress package (installed via composer/installers).
+# Usage: make_wp_package <vendor/name> <type>
+# The composer/installers path repo is taken from this repo's own vendor/,
+# so run `composer install` in the plugin repo before the suite.
+make_wp_package() {
+  local name="$1" type="$2"
+  local dir="${WORK}/fixtures/${name//\//-}"
+  mkdir -p "$dir"
+  cat > "${dir}/composer.json" <<JSON
+{ "name": "${name}", "version": "1.0.0", "type": "${type}", "require": { "composer/installers": "*" } }
+JSON
+  printf '<?php // %s\n' "$name" > "${dir}/main.php"
 }
