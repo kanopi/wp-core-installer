@@ -24,15 +24,18 @@ class DeployManifest
     private const FORMAT = 1;
 
     /**
+     * Treat instances as immutable: use withFiles() to derive a new one.
+     * (Properties are not declared readonly so the plugin runs on PHP 8.0.)
+     *
      * @param string[] $files Web-root-relative paths (forward slashes) of deployed files.
      */
     public function __construct(
-        public readonly string $package,
-        public readonly string $version,
-        public readonly string $reference,
-        public readonly string $webRoot,
-        public readonly string $configHash,
-        public readonly array $files = []
+        public string $package,
+        public string $version,
+        public string $reference,
+        public string $webRoot,
+        public string $configHash,
+        public array $files = []
     ) {
     }
 

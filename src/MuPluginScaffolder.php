@@ -70,8 +70,8 @@ class MuPluginScaffolder
     private ProjectPaths $paths;
 
     public function __construct(
-        private readonly Composer $composer,
-        private readonly IOInterface $io
+        private Composer $composer,
+        private IOInterface $io
     ) {
         $this->filesystem = new Filesystem();
         $this->paths      = new ProjectPaths($composer);
