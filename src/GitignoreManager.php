@@ -304,6 +304,8 @@ class GitignoreManager
             'plugins'    => 'Composer-managed WordPress plugins',
             'themes'     => 'Composer-managed WordPress themes',
             'mu-plugins' => 'Composer-managed WordPress must-use plugins',
+            'dropins'    => 'Composer-managed WordPress drop-ins',
+            'languages'  => 'Composer-managed WordPress language packs',
         ];
 
         foreach ($headings as $typeKey => $heading) {
