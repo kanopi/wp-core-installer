@@ -54,19 +54,14 @@ class GitignoreManager
      */
     private const BLOCK_HEADER = '# Managed by kanopi/wp-core-installer — do not edit this block manually.';
 
-    private const CORE_NEVER_IGNORE = [
-        // Project manifests — must always be tracked.
-        'composer.json',
-        'composer.lock',
-        // wp-content is excluded; individual managed packages within it are
-        // handled separately in the packages block.
+    /**
+     * Top-level web-root directories that also hold project-owned files
+     * (themes, plugins, uploads, …). Deployed core files inside them are
+     * listed individually instead of ignoring the whole directory, so
+     * unmanaged siblings stay tracked.
+     */
+    private const PARTIALLY_MANAGED_DIRS = [
         'wp-content',
-        // User-configurable server config and WP reference file.
-        '.htaccess',
-        // The mu-plugins directory is excluded — the autoloader mu-plugin and
-        // any user-owned files inside it must remain tracked.  The vendor dir
-        // inside mu-plugins is covered in the packages block.
-        'wp-content/mu-plugins',
     ];
 
     /**
@@ -107,8 +102,8 @@ class GitignoreManager
      * @param string              $projectRoot   Absolute path to the project root.
      * @param string   $webRoot       Absolute path where WP core was deployed.
      * @param string[] $deployedFiles Normalised relative paths (from web-root) of every
-     *                                file written during deployment, including skip-if-exists
-     *                                files that already existed on disk.
+     *                                always-synced core file written during deployment
+     *                                (skip-if-exists files are excluded).
      * @param string   $vendorDirAbs  Absolute path to the Composer vendor dir.
      */
     public function updateCoreBlock(
@@ -194,9 +189,9 @@ class GitignoreManager
      * Collapses the deployed file list into the most concise set of gitignore
      * patterns that covers every deployed path exactly:
      *
-     *   - Top-level entries NOT in NEVER_IGNORE → emit as /name or /name/
+     *   - Top-level entries NOT in PARTIALLY_MANAGED_DIRS → emit as /name or /name/
      *     (one rule covers the whole directory tree)
-     *   - Top-level entries IN NEVER_IGNORE (e.g. wp-content) → emit only the
+     *   - Top-level entries IN PARTIALLY_MANAGED_DIRS (wp-content) → emit only the
      *     specific files that were deployed inside them, so unmanaged sibling
      *     files in the same directory remain tracked.
      *
@@ -246,7 +241,7 @@ class GitignoreManager
         $entries = [];
 
         foreach ($groups as $segment => $paths) {
-            if (in_array($segment, self::CORE_NEVER_IGNORE, true)) {
+            if (in_array($segment, self::PARTIALLY_MANAGED_DIRS, true)) {
                 // Partially-managed directory: emit each deployed file explicitly
                 // so that unmanaged siblings stay tracked in git.
                 foreach ($paths as $path) {
@@ -263,7 +258,7 @@ class GitignoreManager
             }
         }
 
-        // De-duplicate (skip-if-exists files appear once, but be safe).
+        // De-duplicate (be safe).
         $entries = array_values(array_unique($entries));
         sort($entries);
 

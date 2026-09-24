@@ -44,3 +44,22 @@ setup() {
   grep -q 'wp-core-installer:packages:begin' "${PROJ}/.gitignore"
   grep -qx '/vendor/' "${PROJ}/.gitignore"
 }
+
+# Regression for #7: skip-if-exists files belong to the project after first
+# install, so they must never be gitignored — neither on the first install
+# (when they are copied) nor on later runs (when they already exist).
+@test "skip-if-exists files are never added to the core block" {
+  run install_core
+  [ "$status" -eq 0 ]
+  run composer_in_project install
+  [ "$status" -eq 0 ]
+
+  block="$(sed -n '/core:begin/,/core:end/p' "${PROJ}/.gitignore")"
+  ! grep -q 'htaccess'             <<<"$block"
+  ! grep -q 'wp-config-sample.php' <<<"$block"
+  ! grep -q 'index.php'            <<<"$block"
+
+  grep -qx '/web/wp-admin/'    <<<"$block"
+  grep -qx '/web/wp-includes/' <<<"$block"
+  grep -qx '/web/wp-load.php'  <<<"$block"
+}
