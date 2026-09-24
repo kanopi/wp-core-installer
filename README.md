@@ -93,6 +93,7 @@ and all other settings go under `extra.wp-core-installer` in your
 | `wordpress-install-dir` | string | `"public"` | Where core is deployed (the web-root). See [below](#wordpress-install-dir). |
 | `protected-paths` | string[] | `[]` | Extra paths, relative to the web-root, that are never copied, deleted or gitignored. Adds to the [built-in list](#built-in-protected-paths). |
 | `skip-if-exists` | string[] | `[]` | Extra paths that are copied on **first** install only and never overwritten or gitignored. Adds to the [built-in list](#built-in-skip-if-exists-paths). |
+| `deploy-bundled` | object | `{}` | Themes and plugins that ship with core to deploy anyway, e.g. `{"themes": ["twentytwentyfive"], "plugins": ["akismet", "hello.php"]}`. See [below](#bundled-themes-and-plugins). |
 | `manage-gitignore` | bool or object | `true` | `false` turns off both [managed blocks](#managed-gitignore-blocks). `{"core": false}` or `{"packages": false}` turns off one. |
 | `scaffold-wp-config` | bool | `false` | Create a starter `wp-config.php` in the web-root when none exists. See [below](#starter-wp-configphp). |
 | `wp-config-template` | string | *(built-in)* | Template for `scaffold-wp-config`, relative to the project root, or absolute. |
@@ -140,7 +141,8 @@ On `composer install` and `composer update`:
    `<vendor-dir>/.wordpress-core-staging/.deploy-manifest.json`. It records
    the package, version, web-root, protection settings and deployed files.
 
-**Unchanged runs skip the copy.** Core is only redeployed when:
+**Unchanged runs skip the copy.** Even during a deploy, files whose content
+already matches are not rewritten. Core is only redeployed when:
 
 - the core package is installed, updated or reinstalled;
 - the manifest doesn't match the installed package, the web-root or the
@@ -167,6 +169,60 @@ alone, because a live site may be running there.
 
 ---
 
+## Commands
+
+The plugin adds three Composer commands. Each one works on the installed
+`wordpress-core` package and your configured web-root.
+
+### `composer wp-core:status`
+
+Checks whether the web-root matches the installed core package. It compares
+the content of every always-synced file, and reports files that are missing,
+changed or stale.
+
+```
+$ composer wp-core:status
+  Package:               johnpbloch/wordpress-core 6.8.3
+  Web-root:              /srv/site/web
+  Last deploy:           6.8.3.0, 3021 files
+Out of sync: 1 to update.
+  Create:                0
+  Update:                1
+  …
+Run composer wp-core:deploy to bring the web-root in line.
+```
+
+It exits **0** when the web-root is in sync and **1** when it has drifted or
+core is missing, so it can gate a CI build. Add `-v` to list the affected
+files.
+
+### `composer wp-core:deploy [--dry-run] [--force]`
+
+Deploys core outside of `composer install`, for example after someone has
+edited a core file. Only new and changed files are written; unchanged files
+keep their timestamps. Stale files are deleted, and the manifest and
+`.gitignore` core block are refreshed.
+
+- `--dry-run` prints what would change and writes nothing. Add `-v` to list
+  the files.
+- `--force` rewrites every core file, including unchanged ones.
+
+### `composer wp-core:verify [--locale=en_US] [--checksums-file=PATH]`
+
+Checks the deployed core files against the MD5 checksums WordPress.org
+publishes for the installed release. It's the same check as
+`wp core verify-checksums`, but it needs neither WP-CLI nor a database.
+
+- **Modified or missing** core files fail the check (exit code 1).
+- **Unexpected** files in `wp-admin/` or `wp-includes/`, meaning files the
+  release doesn't ship, are listed as warnings.
+- Protected and skip-if-exists paths are never checked.
+- `--checksums-file` reads a saved API response instead of downloading one.
+  That's useful offline or in locked-down CI:
+  `curl -o checksums.json "https://api.wordpress.org/core/checksums/1.0/?version=6.8.3&locale=en_US"`.
+
+---
+
 ## Three-tier protection model
 
 | Tier | Copied | Deleted when core drops it | Gitignored |
@@ -187,12 +243,46 @@ Relative to the web-root. A directory protects everything inside it.
 |---|---|
 | `composer.json`, `composer.lock` | Project manifests |
 | `wp-config.php` | WordPress runtime config |
-| `wp-content/themes`, `wp-content/plugins`, `wp-content/mu-plugins` | Project-owned code (bundled default themes and plugins are not deployed) |
+| `wp-content/themes`, `wp-content/plugins`, `wp-content/mu-plugins` | Project-owned code (bundled default themes and plugins are only deployed if listed in [`deploy-bundled`](#bundled-themes-and-plugins)) |
 | `wp-content/uploads` | User-uploaded media |
 | `wp-content/upgrade`, `wp-content/languages` | Directories WordPress manages |
 | `.env`, `.env.local`, `.env.staging`, `.env.production` | Environment and secrets |
 | `.git`, `.gitignore`, `.gitattributes`, `.editorconfig` | VCS and editor files |
 | `node_modules`, `vendor` | Other dependency trees |
+
+### Bundled themes and plugins
+
+WordPress ships default themes and plugins, such as `twentytwentyfive`,
+Akismet and Hello Dolly. Because `wp-content/themes` and `wp-content/plugins`
+are protected, none of them is deployed unless you ask:
+
+```json
+"extra": {
+    "wp-core-installer": {
+        "deploy-bundled": {
+            "themes": ["twentytwentyfive"],
+            "plugins": ["akismet", "hello.php"]
+        }
+    }
+}
+```
+
+- **Naming:** use the name as it appears in `wp-content/themes` or
+  `wp-content/plugins`. That's a directory, or a file for single-file
+  plugins like `hello.php`.
+- **Listed items** are always-synced like other core files. They're updated
+  with core, and each one is gitignored as a single entry (for example
+  `/web/wp-content/themes/twentytwentyfive/`).
+- **Dropping an item** from the list deletes the files the plugin deployed
+  for it on the next `composer install`. Files you added inside that folder
+  are kept. Run `composer wp-core:deploy --dry-run` first to see exactly
+  what will be removed.
+- **Your own `protected-paths` win.** Listing
+  `wp-content/plugins/akismet` there keeps Akismet untouched even if it's
+  also bundled.
+
+A common use is keeping the latest default theme available as a fallback,
+so WordPress still has a theme to load if the active one goes missing.
 
 ### Built-in skip-if-exists paths
 

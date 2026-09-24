@@ -28,7 +28,9 @@ abstract class TestCase extends BaseTestCase
         $real = realpath($dir);
         self::assertIsString($real);
 
-        $this->root        = $real;
+        // Forward slashes, as ProjectPaths returns them (realpath() yields
+        // backslashes on Windows).
+        $this->root        = str_replace('\\', '/', $real);
         $this->previousCwd = (string) getcwd();
         chdir($this->root);
     }

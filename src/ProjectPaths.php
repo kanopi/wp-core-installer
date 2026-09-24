@@ -181,6 +181,64 @@ class ProjectPaths
     }
 
     /**
+     * Bundled themes / plugins from extra.wp-core-installer.deploy-bundled,
+     * as web-root-relative paths such as "wp-content/themes/twentytwentyfive"
+     * or "wp-content/plugins/hello.php".
+     *
+     * Each name must be a single directory or file name inside
+     * wp-content/themes or wp-content/plugins.
+     *
+     * @return string[]
+     */
+    public function bundledPaths(): array
+    {
+        $setting = $this->pluginConfig()['deploy-bundled'] ?? [];
+        $label   = 'extra.wp-core-installer.deploy-bundled';
+
+        if (!is_array($setting)) {
+            throw new \UnexpectedValueException(sprintf(
+                'WP Core Installer: %s in composer.json must be an object like {"themes": [...], "plugins": [...]}.',
+                $label
+            ));
+        }
+
+        $paths = [];
+
+        foreach ($setting as $kind => $names) {
+            if ($kind !== 'themes' && $kind !== 'plugins') {
+                throw new \UnexpectedValueException(sprintf(
+                    'WP Core Installer: %s only accepts "themes" and "plugins", not "%s".',
+                    $label,
+                    (string) $kind
+                ));
+            }
+
+            if (!is_array($names)) {
+                throw new \UnexpectedValueException(
+                    sprintf('WP Core Installer: %s.%s in composer.json must be an array of strings.', $label, $kind)
+                );
+            }
+
+            foreach ($names as $name) {
+                $name = self::requireString($name, $label . '.' . $kind . '[]');
+
+                if ($name === '' || $name === '.' || $name === '..' || strpbrk($name, '/\\') !== false) {
+                    throw new \UnexpectedValueException(sprintf(
+                        'WP Core Installer: "%s" in %s.%s must be a single theme or plugin name (e.g. "akismet").',
+                        $name,
+                        $label,
+                        $kind
+                    ));
+                }
+
+                $paths[] = 'wp-content/' . $kind . '/' . $name;
+            }
+        }
+
+        return array_values(array_unique($paths));
+    }
+
+    /**
      * Reject non-string config values with a message naming the setting,
      * instead of letting them surface later as a TypeError or an
      * "Array to string conversion" warning.
