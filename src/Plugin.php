@@ -7,6 +7,8 @@ namespace Kanopi\Composer\WordPress;
 use Composer\Composer;
 use Composer\EventDispatcher\EventSubscriberInterface;
 use Composer\IO\IOInterface;
+use Composer\Plugin\Capability\CommandProvider as CommandProviderCapability;
+use Composer\Plugin\Capable;
 use Composer\Plugin\PluginInterface;
 use Composer\Script\Event;
 use Composer\Script\ScriptEvents;
@@ -20,8 +22,9 @@ use Composer\Script\ScriptEvents;
  *   2. Subscribes to post-install-cmd / post-update-cmd so that every
  *      Composer-managed plugin and theme (installed by composer/installers)
  *      is tracked in .gitignore after the full dependency tree is resolved.
+ *   3. Provides the wp-core:deploy, wp-core:status and wp-core:verify commands.
  */
-class Plugin implements PluginInterface, EventSubscriberInterface
+class Plugin implements PluginInterface, EventSubscriberInterface, Capable
 {
     private Composer $composer;
     private IOInterface $io;
@@ -48,6 +51,15 @@ class Plugin implements PluginInterface, EventSubscriberInterface
     public function uninstall(Composer $composer, IOInterface $io): void
     {
         // Nothing to clean up on removal of this plugin itself.
+    }
+
+    // -------------------------------------------------------------------------
+    // Capable
+    // -------------------------------------------------------------------------
+
+    public function getCapabilities(): array
+    {
+        return [CommandProviderCapability::class => Command\CommandProvider::class];
     }
 
     // -------------------------------------------------------------------------

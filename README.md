@@ -138,7 +138,8 @@ On `composer install` and `composer update`:
    `<vendor-dir>/.wordpress-core-staging/.deploy-manifest.json`. It records
    the package, version, web-root, protection settings and deployed files.
 
-**Unchanged runs skip the copy.** Core is only redeployed when:
+**Unchanged runs skip the copy.** Even during a deploy, files whose content
+already matches are not rewritten. Core is only redeployed when:
 
 - the core package is installed, updated or reinstalled;
 - the manifest doesn't match the installed package, the web-root or the
@@ -162,6 +163,60 @@ and the web-root is left alone.
 **Removing core** (`composer remove johnpbloch/wordpress-core`) removes the
 staging directory and the core `.gitignore` block. It leaves the web-root
 alone, because a live site may be running there.
+
+---
+
+## Commands
+
+The plugin adds three Composer commands. Each one works on the installed
+`wordpress-core` package and your configured web-root.
+
+### `composer wp-core:status`
+
+Checks whether the web-root matches the installed core package. It compares
+the content of every always-synced file, and reports files that are missing,
+changed or stale.
+
+```
+$ composer wp-core:status
+  Package:               johnpbloch/wordpress-core 6.8.3
+  Web-root:              /srv/site/web
+  Last deploy:           6.8.3.0, 3021 files
+Out of sync: 1 to update.
+  Create:                0
+  Update:                1
+  …
+Run composer wp-core:deploy to bring the web-root in line.
+```
+
+It exits **0** when the web-root is in sync and **1** when it has drifted or
+core is missing, so it can gate a CI build. Add `-v` to list the affected
+files.
+
+### `composer wp-core:deploy [--dry-run] [--force]`
+
+Deploys core outside of `composer install`, for example after someone has
+edited a core file. Only new and changed files are written; unchanged files
+keep their timestamps. Stale files are deleted, and the manifest and
+`.gitignore` core block are refreshed.
+
+- `--dry-run` prints what would change and writes nothing. Add `-v` to list
+  the files.
+- `--force` rewrites every core file, including unchanged ones.
+
+### `composer wp-core:verify [--locale=en_US] [--checksums-file=PATH]`
+
+Checks the deployed core files against the MD5 checksums WordPress.org
+publishes for the installed release. It's the same check as
+`wp core verify-checksums`, but it needs neither WP-CLI nor a database.
+
+- **Modified or missing** core files fail the check (exit code 1).
+- **Unexpected** files in `wp-admin/` or `wp-includes/`, meaning files the
+  release doesn't ship, are listed as warnings.
+- Protected and skip-if-exists paths are never checked.
+- `--checksums-file` reads a saved API response instead of downloading one.
+  That's useful offline or in locked-down CI:
+  `curl -o checksums.json "https://api.wordpress.org/core/checksums/1.0/?version=6.8.3&locale=en_US"`.
 
 ---
 

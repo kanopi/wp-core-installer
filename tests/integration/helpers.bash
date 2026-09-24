@@ -122,3 +122,17 @@ update_core_to() {
   rm -f "${CORE}/composer.json.bak"
   composer_in_project update fake/wordpress-core
 }
+
+# Write a WordPress.org-style checksums file ({"checksums": {path: md5}})
+# for every file in the fake core package, to $1.
+write_core_checksums() {
+  php -r '
+    $base = $argv[1]; $out = [];
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS | FilesystemIterator::UNIX_PATHS));
+    foreach ($it as $f) {
+      $rel = substr(str_replace("\\", "/", $f->getPathname()), strlen($base) + 1);
+      if ($rel !== "composer.json") { $out[$rel] = md5_file($f->getPathname()); }
+    }
+    file_put_contents($argv[2], json_encode(["checksums" => $out]));
+  ' "$(native_path "${CORE}")" "$1"
+}
