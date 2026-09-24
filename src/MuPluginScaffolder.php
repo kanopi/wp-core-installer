@@ -110,7 +110,7 @@ class MuPluginScaffolder
         if (file_put_contents($outputFile, $stub) === false) {
             $this->io->writeError(
                 sprintf(
-                    '  - <e>WP Core Installer: failed to write mu-plugin at %s</e>',
+                    '  - <error>WP Core Installer: failed to write mu-plugin at %s</error>',
                     $outputFile
                 )
             );
