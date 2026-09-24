@@ -102,6 +102,7 @@ class CoreInstaller extends LibraryInstaller
     ];
 
     private GitignoreManager $gitignoreManager;
+    private ProjectPaths $paths;
 
     public function __construct(
         IOInterface $io,
@@ -112,6 +113,7 @@ class CoreInstaller extends LibraryInstaller
     ) {
         parent::__construct($io, $composer, $type, $filesystem, $binaryInstaller);
         $this->gitignoreManager = new GitignoreManager($io);
+        $this->paths            = new ProjectPaths($composer);
     }
 
     // -------------------------------------------------------------------------
@@ -190,7 +192,7 @@ class CoreInstaller extends LibraryInstaller
             '<info>WP Core Installer:</info> Removing staging directory (web-root files are preserved).'
         );
 
-        $this->gitignoreManager->removeCoreBlock((string) getcwd());
+        $this->gitignoreManager->removeCoreBlock($this->paths->projectRoot());
 
         return parent::uninstall($repo, $package);
     }
@@ -320,8 +322,8 @@ class CoreInstaller extends LibraryInstaller
             );
         }
 
-        $projectRoot = (string) getcwd();
-        $webRoot     = $this->resolveWebRoot($projectRoot);
+        $projectRoot = $this->paths->projectRoot();
+        $webRoot     = $this->paths->webRoot();
         $this->filesystem->ensureDirectoryExists($webRoot);
 
         $this->io->write(sprintf('  - Web-root: <comment>%s</comment>', $webRoot));
@@ -401,28 +403,8 @@ class CoreInstaller extends LibraryInstaller
             $projectRoot,
             $webRoot,
             $deployed,
-            $this->vendorDir
+            $this->paths->vendorDir()
         );
-    }
-
-    // -------------------------------------------------------------------------
-    // Helpers: path resolution
-    // -------------------------------------------------------------------------
-
-    private function resolveWebRoot(string $projectRoot): string
-    {
-        $extra  = $this->composer->getPackage()->getExtra();
-        $rawDir = $extra['wordpress-install-dir'] ?? 'public';
-
-        if ($rawDir === '.') {
-            return $projectRoot;
-        }
-
-        if (str_starts_with($rawDir, '/')) {
-            return $rawDir;
-        }
-
-        return $projectRoot . DIRECTORY_SEPARATOR . $rawDir;
     }
 
     // -------------------------------------------------------------------------
@@ -432,8 +414,7 @@ class CoreInstaller extends LibraryInstaller
     /** @return string[] */
     private function buildProtectedList(): array
     {
-        $extra     = $this->composer->getPackage()->getExtra();
-        $userExtra = (array) ($extra['wp-core-installer']['protected-paths'] ?? []);
+        $userExtra = (array) ($this->paths->pluginConfig()['protected-paths'] ?? []);
 
         return array_values(
             array_unique(
@@ -448,8 +429,7 @@ class CoreInstaller extends LibraryInstaller
     /** @return string[] */
     private function buildSkipIfExistsList(): array
     {
-        $extra     = $this->composer->getPackage()->getExtra();
-        $userExtra = (array) ($extra['wp-core-installer']['skip-if-exists'] ?? []);
+        $userExtra = (array) ($this->paths->pluginConfig()['skip-if-exists'] ?? []);
 
         return array_values(
             array_unique(

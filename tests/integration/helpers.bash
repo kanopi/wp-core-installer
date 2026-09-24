@@ -70,3 +70,19 @@ set_install_dir() {
     "${PROJ}/composer.json"
   rm -f "${PROJ}/composer.json.bak"
 }
+
+# Replace the project's entire extra block with the given JSON object.
+# e.g. set_extra '{"wordpress-install-dir": "./public"}'
+set_extra() {
+  php -r '
+    $f = $argv[1];
+    $j = json_decode(file_get_contents($f));
+    $j->extra = json_decode($argv[2], false, 512, JSON_THROW_ON_ERROR);
+    file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+  ' "${PROJ}/composer.json" "$1"
+}
+
+# Install core + this plugin together (the common fresh-install shape).
+install_core() {
+  composer_in_project require "kanopi/wp-core-installer:*" "fake/wordpress-core:*"
+}

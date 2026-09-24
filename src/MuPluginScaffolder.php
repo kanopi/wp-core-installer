@@ -33,18 +33,18 @@ use Composer\Util\Filesystem;
  * path baked into the file is computed from the actual positions of the
  * mu-plugins directory and the vendor directory at generation time:
  *
- *   mu-plugins : {project}/wp-content/mu-plugins
- *   vendor     : {project}/wp-content/mu-plugins/vendor  →  vendor/autoload.php
+ *   mu-plugins : {webroot}/wp-content/mu-plugins
+ *   vendor     : {webroot}/wp-content/mu-plugins/vendor  →  vendor/autoload.php
  *
- *   mu-plugins : {project}/wp-content/mu-plugins
- *   vendor     : {project}/vendor                        →  ../../vendor/autoload.php
+ *   mu-plugins : {project}/public/wp-content/mu-plugins
+ *   vendor     : {project}/vendor                        →  ../../../vendor/autoload.php
  *
  * Configuration
  * ─────────────
  *   "extra": {
  *       "wp-core-installer": {
- *           "mu-plugins-dir":             "wp-content/mu-plugins",  // default
- *           "mu-plugin-autoloader-file":  "autoloader.php",         // default
+ *           "mu-plugins-dir":             "wp-content/mu-plugins",  // default; relative to the web-root
+ *           "mu-plugin-autoloader-file":  "000-autoloader.php",     // default
  *           "manage-mu-plugin-autoloader": true                      // default
  *       }
  *   }
@@ -57,16 +57,15 @@ class MuPluginScaffolder
     /** Default output filename inside the mu-plugins directory. */
     private const DEFAULT_FILENAME = '000-autoloader.php';
 
-    /** Default mu-plugins directory relative to the project root. */
-    private const DEFAULT_MU_PLUGINS_DIR = 'wp-content/mu-plugins';
-
     private Filesystem $filesystem;
+    private ProjectPaths $paths;
 
     public function __construct(
         private readonly Composer $composer,
         private readonly IOInterface $io
     ) {
         $this->filesystem = new Filesystem();
+        $this->paths      = new ProjectPaths($composer);
     }
 
     // -------------------------------------------------------------------------
@@ -91,13 +90,12 @@ class MuPluginScaffolder
             return false;
         }
 
-        $projectRoot  = (string) getcwd();
-        $muPluginsDir = $this->resolveMuPluginsDir($projectRoot);
-        $outputFile   = $muPluginsDir . DIRECTORY_SEPARATOR . $this->resolveFilename();
+        $projectRoot  = $this->paths->projectRoot();
+        $muPluginsDir = $this->paths->muPluginsDir();
+        $outputFile   = $muPluginsDir . '/' . $this->resolveFilename();
 
         // ── Compute the relative path from mu-plugins dir to autoload.php ─────
-        $vendorDir    = (string) $this->composer->getConfig()->get('vendor-dir');
-        $autoloadAbs  = $vendorDir . DIRECTORY_SEPARATOR . 'autoload.php';
+        $autoloadAbs  = $this->paths->vendorDir() . '/autoload.php';
         $relativePath = $this->computeRelativePath($muPluginsDir, $autoloadAbs);
 
         // ── Load the stub template and inject the resolved path ───────────────
@@ -140,10 +138,7 @@ class MuPluginScaffolder
             return null;
         }
 
-        $projectRoot  = (string) getcwd();
-        $muPluginsDir = $this->resolveMuPluginsDir($projectRoot);
-
-        return $muPluginsDir . DIRECTORY_SEPARATOR . $this->resolveFilename();
+        return $this->paths->muPluginsDir() . '/' . $this->resolveFilename();
     }
 
     // -------------------------------------------------------------------------
@@ -155,38 +150,8 @@ class MuPluginScaffolder
      */
     private function isManaged(): bool
     {
-        $extra = $this->composer->getPackage()->getExtra();
-
         // Default true — opt out by setting the flag to false.
-        return (bool) ($extra['wp-core-installer']['manage-mu-plugin-autoloader'] ?? true);
-    }
-
-    /**
-     * Resolve the absolute path to the mu-plugins directory.
-     *
-     * Reads extra.wp-core-installer.mu-plugins-dir (relative to project root),
-     * falling back to wp-content/mu-plugins.
-     */
-    private function resolveMuPluginsDir(string $projectRoot): string
-    {
-        $extra = $this->composer->getPackage()->getExtra();
-        $userInstallDir = $extra['wordpress-install-dir'] ?? '';
-        $rawDir = $extra['wp-core-installer']['mu-plugins-dir'] ?? self::DEFAULT_MU_PLUGINS_DIR;
-
-        // "." means the web root IS the project root (a documented config value).
-        // Treat it as empty so it doesn't survive array_filter() below and pollute
-        // the path with a literal "/./" segment. Mirrors CoreInstaller::resolveWebRoot().
-        if ($userInstallDir === '.') {
-            $userInstallDir = '';
-        }
-
-        if (str_starts_with($rawDir, '/')) {
-            return $rawDir;
-        }
-
-        $parts = array_filter([$projectRoot, $userInstallDir, $rawDir]);
-
-        return implode(DIRECTORY_SEPARATOR, $parts);
+        return (bool) ($this->paths->pluginConfig()['manage-mu-plugin-autoloader'] ?? true);
     }
 
     /**
@@ -194,9 +159,7 @@ class MuPluginScaffolder
      */
     private function resolveFilename(): string
     {
-        $extra = $this->composer->getPackage()->getExtra();
-
-        return (string) ($extra['wp-core-installer']['mu-plugin-autoloader-file'] ?? self::DEFAULT_FILENAME);
+        return (string) ($this->paths->pluginConfig()['mu-plugin-autoloader-file'] ?? self::DEFAULT_FILENAME);
     }
 
     /**
