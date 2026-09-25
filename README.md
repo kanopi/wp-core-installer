@@ -38,11 +38,15 @@ This plugin instead:
 ```bash
 composer config allow-plugins.kanopi/wp-core-installer true
 composer require kanopi/wp-core-installer
-composer require johnpbloch/wordpress-core
+composer require kanopi/wordpress-core
 ```
 
-Any package of type `wordpress-core` works, for example
-`johnpbloch/wordpress-core` or `roots/wordpress-no-content`.
+Any package of type `wordpress-core` works. [`kanopi/wordpress-core`](https://packagist.org/packages/kanopi/wordpress-core)
+is Kanopi's mirror of WordPress releases and brings no installer of its own.
+`johnpbloch/wordpress-core` and `roots/wordpress-no-content` work too.
+
+For a complete `composer.json` for WP Engine, Pantheon or Kinsta, see
+[Host recipes](#host-recipes).
 
 The plugin conflicts with `johnpbloch/wordpress-core-installer`,
 `roots/wordpress-core-installer` and `fancyguy/webroot-installer`, which do
@@ -122,6 +126,180 @@ Values are normalised, so `./public`, `public/` and `public//` all mean
 which is the directory you run `composer` in (or the one passed to
 `--working-dir`). Composer uses the same rule for `vendor-dir` and
 `installer-paths`.
+
+---
+
+## Host recipes
+
+The docroot your host serves decides three settings:
+- `wordpress-install-dir`,
+- the prefix on every `installer-paths` entry,
+- where `vendor/` lives, because it has to be inside whatever your deploy
+  ships.
+
+These are the setups Kanopi uses. Copy the one for your host, then add your
+own plugins and themes.
+
+| Host | Docroot | `vendor-dir` | Deploy |
+|---|---|---|---|
+| [WP Engine](#wp-engine) | repository root (`.`) | `vendor` (default) | CI build, then rsync |
+| [Pantheon](#pantheon) | `web/` | `web/wp-content/mu-plugins/vendor` | CI build, then git push of the artifact (Terminus build-tools) |
+| [Kinsta](#kinsta) | `public/` | `public/wp-content/mu-plugins/vendor` | CI build, rsync, then cache purge |
+
+In every case, CI runs `composer install --no-dev` and deploys the result,
+not the git repository. So the files the managed `.gitignore` blocks keep out
+of your repo (core, Composer-managed plugins, `vendor/`, the autoloader
+mu-plugin) still reach the server.
+
+### WP Engine
+
+WP Engine serves WordPress from the repository root.
+
+```json
+{
+    "require": {
+        "composer/installers": "^2.0",
+        "kanopi/wp-core-installer": "^1.3",
+        "kanopi/wordpress-core": "^6.8"
+    },
+    "config": {
+        "allow-plugins": {
+            "composer/installers": true,
+            "kanopi/wp-core-installer": true
+        }
+    },
+    "extra": {
+        "wordpress-install-dir": ".",
+        "installer-paths": {
+            "wp-content/plugins/{$name}/":    ["type:wordpress-plugin"],
+            "wp-content/themes/{$name}/":     ["type:wordpress-theme"],
+            "wp-content/mu-plugins/{$name}/": ["type:wordpress-muplugin"]
+        }
+    }
+}
+```
+
+- **Deploy:** CI runs `composer install --no-dev`, then rsyncs the built tree
+  to `*.ssh.wpengine.net`.
+- **WP Engine's own mu-plugins** (`wpengine-common` and friends) live in
+  `wp-content/mu-plugins/`. The plugin never touches that directory apart from
+  its own `000-autoloader.php`. Keep your rsync from deleting WP Engine's
+  files, either by excluding them or by not using `--delete` on
+  `wp-content/mu-plugins/`.
+
+### Pantheon
+
+Pantheon serves the `web/` directory (`web_docroot: true` in `pantheon.yml`).
+Pantheon itself doesn't run Composer (`build_step: false`), so CI builds the
+site and pushes it.
+
+```json
+{
+    "require": {
+        "composer/installers": "^2.0",
+        "kanopi/wp-core-installer": "^1.3",
+        "kanopi/wordpress-core": "^6.8"
+    },
+    "config": {
+        "vendor-dir": "web/wp-content/mu-plugins/vendor",
+        "allow-plugins": {
+            "composer/installers": true,
+            "kanopi/wp-core-installer": true
+        }
+    },
+    "extra": {
+        "wordpress-install-dir": "web",
+        "installer-paths": {
+            "web/wp-content/plugins/{$name}/":    ["type:wordpress-plugin"],
+            "web/wp-content/themes/{$name}/":     ["type:wordpress-theme"],
+            "web/wp-content/mu-plugins/{$name}/": ["type:wordpress-muplugin"]
+        }
+    }
+}
+```
+
+- **`vendor-dir` goes under `web/`.** Only the docroot ships to Pantheon, so
+  the Composer autoloader and dependencies have to live inside it. The
+  autoloader mu-plugin works out the path from `vendor-dir` on its own.
+- **Deploy:** CI runs `composer install --no-dev`, then
+  `terminus build:env:push`, which commits the built artifact to Pantheon's
+  repository. Remove `.gitignore` in that CI step (`rm .gitignore`) so the
+  artifact includes core, plugins and `vendor/`. Your own repository keeps the
+  managed blocks. If your pipeline can't remove the file, set
+  `"manage-gitignore": false` instead (see
+  [Build-artifact deploys](#build-artifact-deploys-pantheon-and-similar)).
+- **Pantheon's platform plugins**, such as
+  `pantheon-systems/pantheon-mu-plugin`, `wpackagist-plugin/wp-redis`,
+  `wpackagist-plugin/wp-native-php-sessions` and
+  `wpackagist-plugin/pantheon-advanced-page-cache`, are regular Composer
+  requirements. Add the ones you use.
+- **Integrated Composer** (`build_step: true`, where Pantheon runs Composer
+  itself) is a different setup and isn't covered here.
+
+### Kinsta
+
+Kinsta serves the `public/` directory of the site (`/www/<site>_<id>/public/`).
+The Kinsta MU plugin is required, because it provides the cache purge used
+after each deploy. It isn't on a Composer repository, so declare it inline.
+
+```json
+{
+    "repositories": {
+        "kinsta": {
+            "type": "package",
+            "package": {
+                "name": "kinsta/kinsta-mu-plugins",
+                "type": "wordpress-muplugin",
+                "version": "3.5.1",
+                "dist": {
+                    "type": "zip",
+                    "url": "https://kinsta.com/kinsta-tools/kinsta-mu-plugins.zip"
+                }
+            }
+        }
+    },
+    "require": {
+        "composer/installers": "^2.0",
+        "kanopi/wp-core-installer": "^1.3",
+        "kanopi/wordpress-core": "^6.8",
+        "kinsta/kinsta-mu-plugins": "^3.5"
+    },
+    "config": {
+        "vendor-dir": "public/wp-content/mu-plugins/vendor",
+        "allow-plugins": {
+            "composer/installers": true,
+            "kanopi/wp-core-installer": true
+        }
+    },
+    "extra": {
+        "wordpress-install-dir": "public",
+        "installer-paths": {
+            "public/wp-content/mu-plugins/":         ["kinsta/kinsta-mu-plugins"],
+            "public/wp-content/plugins/{$name}/":    ["type:wordpress-plugin"],
+            "public/wp-content/themes/{$name}/":     ["type:wordpress-theme"],
+            "public/wp-content/mu-plugins/{$name}/": ["type:wordpress-muplugin"]
+        }
+    }
+}
+```
+
+- **Kinsta MU plugin location:** it ships its own loader, so it installs
+  straight into `mu-plugins/`. The package-specific `installer-paths` entry
+  must come **before** the generic `type:wordpress-muplugin` one.
+- **Upgrading the Kinsta MU plugin:** the zip URL always serves the latest
+  version, so Composer locks against the inline `version`. Bump that string
+  when you want a newer copy, then run
+  `composer update kinsta/kinsta-mu-plugins`.
+- **Deploy:** CI runs `composer install --no-dev`, rsyncs `public/*` to the
+  site's `public/` directory, then purges the cache over SSH:
+  `cd /www/<site>_<id>/public && wp kinsta cache purge --all`. The deploy
+  isn't finished until the purge runs, or visitors keep getting stale pages.
+- **Known issue:** because the Kinsta MU plugin installs into the mu-plugins
+  root, the packages `.gitignore` block currently ignores the whole
+  `public/wp-content/mu-plugins/` directory, including your own mu-plugins
+  (#46). Until that's fixed, commit your own mu-plugins with `git add -f`.
+  Files git already tracks stay tracked. A `!` exception won't help, because
+  git can't re-include files inside a directory that's already ignored.
 
 ---
 
@@ -372,7 +550,11 @@ Two kinds of package are left out:
 Some hosts deploy by committing the **built** site, including core and
 plugins, to the host's git repository. Pantheon's `terminus build:env:push`
 is one example. There, these blocks would strip the build of exactly what
-it needs to ship. Turn them off:
+it needs to ship.
+
+The usual fix is to delete `.gitignore` in the CI step that builds the
+artifact (see the [Pantheon recipe](#pantheon)). If that isn't an option,
+turn the blocks off:
 
 ```json
 "extra": {
