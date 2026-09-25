@@ -120,19 +120,18 @@ install_kinsta() {
   ! grep -q 'kinsta-mu-plugins' "${PROJ}/.gitignore" || false
 }
 
-@test "an existing file that copy-to did not place is never overwritten" {
+@test "overwrite takes over an existing file at the destination, and says so" {
   kinsta_release 3.5.0
   use_copy_to
-  # e.g. an older, previously committed copy of the Kinsta MU plugin
+  # e.g. an older, previously committed copy of the same file
   printf '<?php // committed older copy\n' > "${MU}/kinsta-mu-plugins.php"
 
   run install_kinsta 3.5.0
   [ "$status" -eq 0 ]
 
-  [ "$(cat "${MU}/kinsta-mu-plugins.php")" = "<?php // committed older copy" ]
-  [[ "$output" == *"were not placed by it; left untouched"* ]] || false
-  [[ "$output" == *"kinsta-mu-plugins.php"* ]] || false
-  [ -f "${MU}/kinsta-mu-plugins/lib.php" ]
+  [ "$(cat "${MU}/kinsta-mu-plugins.php")" = "<?php // loader 3.5.0" ]
+  [[ "$output" == *"replaced existing file(s) it now manages: kinsta-mu-plugins.php"* ]] || false
+  [ -f "${MU}/my-plugin.php" ]
 }
 
 @test "an identical existing file is adopted, so it is updated and removed later" {
@@ -195,35 +194,37 @@ install_kinsta() {
 # variant "v2": changed loader, no assets/old.css.
 tools_release() {
   php -r '
-    [$_, $dir, $version, $variant] = $argv + [3 => ""];
+    [$_, $dir, $version, $variant, $extra] = $argv + [3 => "", 4 => ""];
     $zip = new ZipArchive();
     $zip->open("$dir/tools-$version.zip", ZipArchive::CREATE | ZipArchive::OVERWRITE);
     $zip->addFromString("composer.json", json_encode([
         "name" => "acme/tools", "version" => $version,
         "type" => "wordpress-plugin", "require" => ["composer/installers" => "*"],
+        "extra" => $extra === "" ? new stdClass() : json_decode($extra),
     ]));
+    $zip->addFromString("rules.conf", "RewriteRule ^tools-$version$ /tools [L]\n");
     $zip->addFromString("tools.php", "<?php // plugin\n");
     $zip->addFromString("includes/object-cache.php", "<?php // drop-in $version\n");
     $zip->addFromString("loader.php", "<?php // loader $version\n");
     $zip->addFromString("assets/app.css", "body{}\n");
     if ($variant !== "v2") { $zip->addFromString("assets/old.css", "old{}\n"); }
     $zip->close();
-  ' "$(native_path "${WORK}/artifacts")" "$1" "${2:-}"
+  ' "$(native_path "${WORK}/artifacts")" "$1" "${2:-}" "${3:-}"
 }
 
-# $1 = copy-to JSON members.
+# $1 = copy-to JSON members, $2 = other wp-core-installer JSON members.
 configure_tools() {
   php -r '
-    [$_, $file, $artifacts, $copyTo] = $argv;
+    [$_, $file, $artifacts, $copyTo, $more] = $argv + [4 => ""];
     $j = json_decode(file_get_contents($file));
     $j->repositories->artifacts = (object) ["type" => "artifact", "url" => $artifacts];
     $j->extra = json_decode("{
       \"wordpress-install-dir\": \"public\",
       \"installer-paths\": { \"public/wp-content/plugins/{\$name}/\": [\"type:wordpress-plugin\"] },
-      \"wp-core-installer\": { \"copy-to\": {" . $copyTo . "} }
+      \"wp-core-installer\": { \"copy-to\": {" . $copyTo . "}" . ($more === "" ? "" : ", " . $more) . " }
     }");
     file_put_contents($file, json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-  ' "${PROJ}/composer.json" "$(native_path "${WORK}/artifacts")" "$1"
+  ' "${PROJ}/composer.json" "$(native_path "${WORK}/artifacts")" "$1" "${2:-}"
 }
 
 install_tools() {
@@ -339,4 +340,171 @@ install_tools() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'acme/tools does not contain "nope.php"'* ]] || false
   [ ! -e "${MU}/nope.php" ]
+}
+
+# ── modes ───────────────────────────────────────────────────────────────────
+
+@test "if-missing copies once, then never updates, removes or gitignores it" {
+  tools_release 1.0.0
+  tools_release 2.0.0 v2
+  configure_tools '"acme/tools:loader.php": {"to": "config/loader.php", "mode": "if-missing"}'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+  [ "$(cat "${PROJ}/config/loader.php")" = "<?php // loader 1.0.0" ]
+  ! grep -q 'config/loader.php' "${PROJ}/.gitignore" || false
+
+  run install_tools 2.0.0
+  [ "$status" -eq 0 ]
+  [ "$(cat "${PROJ}/config/loader.php")" = "<?php // loader 1.0.0" ]
+
+  run composer_in_project remove acme/tools
+  [ "$status" -eq 0 ]
+  [ -f "${PROJ}/config/loader.php" ]
+}
+
+@test "append keeps one marked section at the end of the file, updated in place" {
+  tools_release 1.0.0
+  tools_release 2.0.0 v2
+  mkdir -p "${PROJ}/public"
+  printf '# my rules\nRewriteEngine On\n' > "${PROJ}/public/.htaccess"
+  configure_tools '"acme/tools:rules.conf": {"to": "[web-root]/.htaccess", "mode": "append"}'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+  head -2 "${PROJ}/public/.htaccess" | grep -qx 'RewriteEngine On'
+  grep -qx 'RewriteRule ^tools-1.0.0$ /tools \[L\]' "${PROJ}/public/.htaccess"
+  [ "$(tail -1 "${PROJ}/public/.htaccess")" = "# END acme/tools:rules.conf" ]
+  ! grep -q '.htaccess' "${PROJ}/.gitignore" || false
+
+  run composer_in_project install
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'BEGIN acme/tools:rules.conf' "${PROJ}/public/.htaccess")" -eq 1 ]
+
+  run install_tools 2.0.0
+  [ "$status" -eq 0 ]
+  grep -qx 'RewriteRule ^tools-2.0.0$ /tools \[L\]' "${PROJ}/public/.htaccess"
+  ! grep -q 'tools-1.0.0' "${PROJ}/public/.htaccess" || false
+  [ "$(grep -c 'BEGIN acme/tools:rules.conf' "${PROJ}/public/.htaccess")" -eq 1 ]
+}
+
+@test "removing an append entry strips only its section" {
+  tools_release 1.0.0
+  mkdir -p "${PROJ}/public"
+  printf '# my rules\nRewriteEngine On\n' > "${PROJ}/public/.htaccess"
+  configure_tools '"acme/tools:rules.conf": {"to": "[web-root]/.htaccess", "mode": "append"}'
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+
+  run composer_in_project remove acme/tools
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "${PROJ}/public/.htaccess")" = "$(printf '# my rules\nRewriteEngine On')" ]
+}
+
+@test "prepend puts the section first, and a missing destination is created" {
+  tools_release 1.0.0
+  configure_tools '"acme/tools:rules.conf": {"to": "[web-root]/.htaccess", "mode": "prepend"}, "acme/tools:loader.php": {"to": "config/extra.php", "mode": "append", "comment": "//"}'
+  mkdir -p "${PROJ}/public"
+  printf 'RewriteEngine On\n' > "${PROJ}/public/.htaccess"
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+  [ "$(head -1 "${PROJ}/public/.htaccess")" = "# BEGIN acme/tools:rules.conf (managed by kanopi/wp-core-installer copy-to)" ]
+  [ "$(tail -1 "${PROJ}/public/.htaccess")" = "RewriteEngine On" ]
+  [ "$(head -1 "${PROJ}/config/extra.php")" = "// BEGIN acme/tools:loader.php (managed by kanopi/wp-core-installer copy-to)" ]
+
+  run composer_in_project remove acme/tools
+  [ "$status" -eq 0 ]
+  [ ! -e "${PROJ}/config/extra.php" ]
+}
+
+@test "append and prepend refuse a folder source" {
+  tools_release 1.0.0
+  configure_tools '"acme/tools:assets": {"to": "[web-root]/.htaccess", "mode": "append"}'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'mode "append" works on a single file, and "assets" is not a file'* ]] || false
+  # (core's own .htaccess exists; it must not have gained a section)
+  ! grep -q 'BEGIN acme/tools:assets' "${PROJ}/public/.htaccess" || false
+}
+
+@test "gitignore can be switched off for an overwrite entry" {
+  tools_release 1.0.0
+  configure_tools '"acme/tools:loader.php": {"to": "[mu-plugins]/", "gitignore": false}'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+  [ -f "${MU}/loader.php" ]
+  ! grep -q 'mu-plugins/loader.php' "${PROJ}/.gitignore" || false
+}
+
+@test "changing an entry's destination moves it" {
+  tools_release 1.0.0
+  configure_tools '"acme/tools:loader.php": "config/a.php"'
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+
+  configure_tools '"acme/tools:loader.php": "config/b.php"'
+  run composer_in_project install
+  [ "$status" -eq 0 ]
+
+  [ ! -e "${PROJ}/config/a.php" ]
+  [ -f "${PROJ}/config/b.php" ]
+}
+
+# ── entries declared by packages ────────────────────────────────────────────
+
+TOOLS_DECLARES='{"wp-core-installer": {"copy-to": {"loader.php": "[mu-plugins]/", "includes/object-cache.php": "[wp-content]/"}}}'
+
+@test "a package's own copy-to is ignored unless the project allows it" {
+  tools_release 1.0.0 "" "$TOOLS_DECLARES"
+  configure_tools ''
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+  [ ! -e "${MU}/loader.php" ]
+  [ ! -e "${PROJ}/public/wp-content/object-cache.php" ]
+}
+
+@test "an allowed package's own copy-to entries are applied" {
+  tools_release 1.0.0 "" "$TOOLS_DECLARES"
+  configure_tools '' '"copy-to-allowed-packages": ["acme/tools"]'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+  [ -f "${MU}/loader.php" ]
+  [ -f "${PROJ}/public/wp-content/object-cache.php" ]
+  grep -qx '/public/wp-content/mu-plugins/loader.php' "${PROJ}/.gitignore"
+
+  run composer_in_project remove acme/tools
+  [ "$status" -eq 0 ]
+  [ ! -e "${MU}/loader.php" ]
+  [ ! -e "${PROJ}/public/wp-content/object-cache.php" ]
+}
+
+@test "the project can override or switch off a package's entry" {
+  tools_release 1.0.0 "" "$TOOLS_DECLARES"
+  configure_tools '"acme/tools:loader.php": "config/loader.php", "acme/tools:includes/object-cache.php": false' '"copy-to-allowed-packages": ["acme/tools"]'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+  [ -f "${PROJ}/config/loader.php" ]
+  [ ! -e "${MU}/loader.php" ]
+  [ ! -e "${PROJ}/public/wp-content/object-cache.php" ]
+}
+
+@test "a package's destinations must use a placeholder and stay inside the project" {
+  tools_release 1.0.0 "" '{"wp-core-installer": {"copy-to": {"loader.php": "public/wp-content/mu-plugins/"}}}'
+  configure_tools '' '"copy-to-allowed-packages": ["acme/tools"]'
+  run install_tools 1.0.0
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'must start with a placeholder such as [mu-plugins]/'* ]] || false
+
+  rm -rf "${PROJ}/vendor" "${PROJ}/public/wp-content/mu-plugins/vendor" "${PROJ}/composer.lock"
+  tools_release 1.0.0 "" '{"wp-core-installer": {"copy-to": {"loader.php": "[project-root]/../../outside.php"}}}'
+  run install_tools 1.0.0
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'must stay inside the project'* ]] || false
 }

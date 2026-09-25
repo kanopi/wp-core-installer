@@ -35,6 +35,9 @@ class ProjectPaths
     /** Default web-root relative to the project root. */
     public const DEFAULT_INSTALL_DIR = 'public';
 
+    /** Supported copy-to modes. */
+    public const COPY_MODES = ['overwrite', 'if-missing', 'append', 'prepend'];
+
     /** Default mu-plugins directory relative to the web-root. */
     public const DEFAULT_MU_PLUGINS_DIR = 'wp-content/mu-plugins';
 
@@ -99,76 +102,277 @@ class ProjectPaths
     }
 
     /**
-     * extra.wp-core-installer.copy-to entries: copy a file or folder out of
-     * an installed package (any type) to any path in the project.
+     * The effective copy-to entries: the project's own
+     * (extra.wp-core-installer.copy-to) plus those declared by allowed
+     * packages in *their* extra.wp-core-installer.copy-to.
      *
+     * Project entries:
      *   "vendor/package:path/in/pkg" => "dest/dir/"      into dest/dir/, keeping its name
      *   "vendor/package:path/in/pkg" => "dest/new-name"  to exactly dest/new-name (rename)
      *   "vendor/package"             => "dest/dir"       every top-level entry into dest/dir/
+     *   "vendor/package:path"        => {"to": ..., "mode": ..., "gitignore": ..., "comment": ...}
+     *   "vendor/package:path"        => false            switch off an entry a package declares
      *
-     * Destinations are relative to the project root (like installer-paths)
-     * or absolute. A trailing "/" marks a destination directory.
+     * Package entries (only for packages listed in
+     * extra.wp-core-installer.copy-to-allowed-packages): keys are paths inside
+     * the package, and destinations must start with a placeholder, since a
+     * package can't know the project layout:
+     *   "kinsta-mu-plugins.php" => "[mu-plugins]/"
      *
-     * @return array<string, array{package: string, path: string, dir: string, name: string}>
-     *         Keyed by the normalised entry. "dir" is the absolute folder the
-     *         copy lands in; "name" is the copied entry's name inside it
-     *         ('' for a whole package).
+     * Placeholders (usable in project entries too): [project-root], [web-root],
+     * [wp-content], [mu-plugins], [plugins], [themes]. Other destinations are
+     * relative to the project root (like installer-paths) or absolute. A
+     * trailing "/" (or a bare placeholder) marks a destination directory.
+     *
+     * Modes: overwrite (default; keep the destination identical to the
+     * package), if-missing (copy once, then leave it alone), append / prepend
+     * (a marked section at the end / start of the destination file; files
+     * only). gitignore defaults to true for overwrite and false otherwise.
+     *
+     * @return array<string, array{package: string, path: string, dir: string, name: string,
+     *                              mode: string, gitignore: bool, comment: string, source: string}>
+     *         Keyed by "vendor/package" or "vendor/package:path". "dir" is the
+     *         absolute folder the copy lands in; "name" is the copied entry's
+     *         name inside it ('' for a whole package); "source" says where the
+     *         entry was declared.
      */
     public function copyTargets(): array
     {
-        $setting = $this->pluginConfig()['copy-to'] ?? [];
         $label   = 'extra.wp-core-installer.copy-to';
+        $setting = $this->pluginConfig()['copy-to'] ?? [];
 
         if (!is_array($setting)) {
             throw new \UnexpectedValueException(sprintf(
                 'WP Core Installer: %s in composer.json must be an object like'
-                . ' {"vendor/package:file.php": "web/wp-content/mu-plugins/"}.',
+                . ' {"vendor/package:file.php": "[mu-plugins]/"}.',
                 $label
             ));
         }
 
-        $entries = [];
+        $entries  = [];
+        $disabled = [];
 
         foreach ($setting as $key => $destination) {
-            $key = (string) $key;
+            [$package, $path] = $this->parseCopyKey((string) $key, $label);
+            $normalised       = $path === '' ? $package : $package . ':' . $path;
 
-            if (preg_match('{^([a-z0-9_.-]+/[a-z0-9_.-]+)(?::(.+))?$}i', $key, $match) !== 1) {
-                throw new \UnexpectedValueException(sprintf(
-                    'WP Core Installer: %s keys must look like "vendor/package" or "vendor/package:path/in/package",'
-                    . ' "%s" given.',
-                    $label,
-                    $key
-                ));
+            if ($destination === false) {
+                $disabled[$normalised] = true;
+                continue;
             }
 
-            $package = strtolower($match[1]);
-            $rawPath = str_replace('\\', '/', $match[2] ?? '');
-            $path    = trim($rawPath, '/');
-
-            if (
-                ($rawPath !== '' && ($this->filesystem->isAbsolutePath($rawPath) || $path === ''))
-                || in_array('..', explode('/', $path), true)
-            ) {
-                throw new \UnexpectedValueException(sprintf(
-                    'WP Core Installer: the path in %s "%s" must be relative to the package, without "..".',
-                    $label,
-                    $key
-                ));
-            }
-
-            $raw      = trim(str_replace('\\', '/', self::requireString($destination, $label . '.' . $key)));
-            $resolved = $this->resolve($this->projectRoot(), $raw);
-            $isDir    = $path === '' || $raw === '' || $raw === '.' || str_ends_with($raw, '/');
-
-            $entries[$path === '' ? $package : $package . ':' . $path] = [
-                'package' => $package,
-                'path'    => $path,
-                'dir'     => $isDir ? $resolved : dirname($resolved),
-                'name'    => $path === '' ? '' : ($isDir ? basename($path) : basename($resolved)),
-            ];
+            $entries[$normalised] = $this->copyEntry($package, $path, $destination, $label . '.' . $key, false)
+                + ['source' => 'composer.json'];
         }
 
+        foreach ($this->copyAllowedPackages() as $package) {
+            $extra    = $package->getExtra()['wp-core-installer'] ?? [];
+            $declared = is_array($extra) ? ($extra['copy-to'] ?? []) : [];
+            $name     = strtolower($package->getName());
+            $pkgLabel = sprintf('%s (extra.wp-core-installer.copy-to)', $package->getPrettyName());
+
+            if (!is_array($declared)) {
+                throw new \UnexpectedValueException(
+                    sprintf(
+                        'WP Core Installer: %s must be an object of "path": "[placeholder]/..." entries.',
+                        $pkgLabel
+                    )
+                );
+            }
+
+            foreach ($declared as $path => $destination) {
+                [, $path]   = $this->parseCopyKey($name . ':' . (string) $path, $pkgLabel);
+                $normalised = $name . ':' . $path;
+
+                if ($path === '' || isset($entries[$normalised]) || isset($disabled[$normalised])) {
+                    continue; // the project's own entry (or false) wins
+                }
+
+                $entryLabel           = $pkgLabel . ' "' . $path . '"';
+                $entries[$normalised] = $this->copyEntry($name, $path, $destination, $entryLabel, true)
+                    + ['source' => $package->getPrettyName()];
+            }
+        }
+
+        ksort($entries);
+
         return $entries;
+    }
+
+    /**
+     * Installed packages allowed to declare their own copy-to entries.
+     *
+     * @return \Composer\Package\PackageInterface[]
+     */
+    private function copyAllowedPackages(): array
+    {
+        $allowed = array_map('strtolower', $this->configStringList('copy-to-allowed-packages'));
+
+        if ($allowed === []) {
+            return [];
+        }
+
+        $packages = [];
+        foreach ($this->composer->getRepositoryManager()->getLocalRepository()->getPackages() as $package) {
+            if (in_array(strtolower($package->getName()), $allowed, true)) {
+                $packages[] = $package;
+            }
+        }
+
+        return $packages;
+    }
+
+    /**
+     * Split and validate a "vendor/package[:path]" key.
+     *
+     * @return array{string, string} Lower-cased package name, normalised path ('' = whole package).
+     */
+    private function parseCopyKey(string $key, string $label): array
+    {
+        if (preg_match('{^([a-z0-9_.-]+/[a-z0-9_.-]+)(?::(.+))?$}i', $key, $match) !== 1) {
+            throw new \UnexpectedValueException(sprintf(
+                'WP Core Installer: %s keys must look like "vendor/package" or "vendor/package:path/in/package",'
+                . ' "%s" given.',
+                $label,
+                $key
+            ));
+        }
+
+        $rawPath = str_replace('\\', '/', $match[2] ?? '');
+        $path    = trim($rawPath, '/');
+
+        if (
+            ($rawPath !== '' && ($this->filesystem->isAbsolutePath($rawPath) || $path === ''))
+            || in_array('..', explode('/', $path), true)
+        ) {
+            throw new \UnexpectedValueException(sprintf(
+                'WP Core Installer: the path in %s "%s" must be relative to the package, without "..".',
+                $label,
+                $key
+            ));
+        }
+
+        return [strtolower($match[1]), $path];
+    }
+
+    /**
+     * Validate one entry's destination and options.
+     *
+     * @param mixed $destination     A destination string or an options object.
+     * @param bool  $fromPackage     Declared by a package: destinations must use a
+     *                               placeholder and stay inside the project.
+     * @return array{package: string, path: string, dir: string, name: string,
+     *               mode: string, gitignore: bool, comment: string}
+     */
+    private function copyEntry(
+        string $package,
+        string $path,
+        mixed $destination,
+        string $label,
+        bool $fromPackage
+    ): array {
+        $options = is_array($destination) ? $destination : ['to' => $destination];
+
+        foreach (array_keys($options) as $option) {
+            if (!in_array($option, ['to', 'mode', 'gitignore', 'comment'], true)) {
+                throw new \UnexpectedValueException(sprintf(
+                    'WP Core Installer: %s has an unknown option "%s" (expected to, mode, gitignore, comment).',
+                    $label,
+                    (string) $option
+                ));
+            }
+        }
+
+        $mode = self::requireString($options['mode'] ?? 'overwrite', $label . '.mode');
+        if (!in_array($mode, self::COPY_MODES, true)) {
+            throw new \UnexpectedValueException(sprintf(
+                'WP Core Installer: %s.mode must be one of %s, "%s" given.',
+                $label,
+                implode(', ', self::COPY_MODES),
+                $mode
+            ));
+        }
+
+        if (($mode === 'append' || $mode === 'prepend') && $path === '') {
+            throw new \UnexpectedValueException(sprintf(
+                'WP Core Installer: %s: mode "%s" works on a single file, e.g. "%s:path/to/file".',
+                $label,
+                $mode,
+                $package
+            ));
+        }
+
+        $gitignore = $options['gitignore'] ?? ($mode === 'overwrite');
+        if (!is_bool($gitignore)) {
+            throw new \UnexpectedValueException(
+                sprintf('WP Core Installer: %s.gitignore must be true or false.', $label)
+            );
+        }
+
+        $raw = trim(str_replace('\\', '/', self::requireString($options['to'] ?? null, $label . '.to')));
+        [$resolved, $isPlaceholderOnly] = $this->resolveCopyDestination($raw, $label, $fromPackage);
+        $isDir = $path === '' || $isPlaceholderOnly || $raw === '' || $raw === '.' || str_ends_with($raw, '/');
+
+        return [
+            'package'   => $package,
+            'path'      => $path,
+            'dir'       => $isDir ? $resolved : dirname($resolved),
+            'name'      => $path === '' ? '' : ($isDir ? basename($path) : basename($resolved)),
+            'mode'      => $mode,
+            'gitignore' => $gitignore,
+            'comment'   => self::requireString($options['comment'] ?? '#', $label . '.comment'),
+        ];
+    }
+
+    /**
+     * Resolve a copy-to destination, expanding a leading placeholder.
+     *
+     * @return array{string, bool} Absolute path, and whether it was a bare placeholder.
+     */
+    private function resolveCopyDestination(string $raw, string $label, bool $fromPackage): array
+    {
+        $placeholders = [
+            '[project-root]' => $this->projectRoot(),
+            '[web-root]'     => $this->webRoot(),
+            '[wp-content]'   => $this->resolve($this->webRoot(), 'wp-content'),
+            '[mu-plugins]'   => $this->muPluginsDir(),
+            '[plugins]'      => $this->resolve($this->webRoot(), 'wp-content/plugins'),
+            '[themes]'       => $this->resolve($this->webRoot(), 'wp-content/themes'),
+        ];
+
+        if (preg_match('{^(\[[a-z-]+\])(/.*)?$}', $raw, $match) === 1) {
+            if (!isset($placeholders[$match[1]])) {
+                throw new \UnexpectedValueException(sprintf(
+                    'WP Core Installer: %s uses an unknown placeholder %s (expected %s).',
+                    $label,
+                    $match[1],
+                    implode(', ', array_keys($placeholders))
+                ));
+            }
+
+            $rest     = trim($match[2] ?? '', '/');
+            $resolved = $this->resolve($placeholders[$match[1]], $rest === '' ? '.' : $rest);
+            $bare     = $rest === '';
+        } elseif ($fromPackage) {
+            throw new \UnexpectedValueException(sprintf(
+                'WP Core Installer: %s must start with a placeholder such as [mu-plugins]/ or [web-root]/, "%s" given.',
+                $label,
+                $raw
+            ));
+        } else {
+            $resolved = $this->resolve($this->projectRoot(), $raw);
+            $bare     = false;
+        }
+
+        $insideProject = $resolved === $this->projectRoot() || str_starts_with($resolved, $this->projectRoot() . '/');
+
+        if ($fromPackage && !$insideProject) {
+            throw new \UnexpectedValueException(
+                sprintf('WP Core Installer: %s must stay inside the project, "%s" given.', $label, $raw)
+            );
+        }
+
+        return [$resolved, $bare];
     }
 
     /**

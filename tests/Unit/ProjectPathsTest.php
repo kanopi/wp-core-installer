@@ -147,40 +147,59 @@ final class ProjectPathsTest extends TestCase
         $paths = new ProjectPaths($this->composer([
             'wordpress-install-dir' => 'public',
             'wp-core-installer'     => ['copy-to' => [
-                'Acme/Some-MU-Plugin:loader.php'                          => 'public/wp-content/mu-plugins/',
+                'Acme/Some-MU-Plugin:loader.php'                          => '[mu-plugins]/',
                 'wpackagist-plugin/redis-cache:includes/object-cache.php' => 'public/wp-content/object-cache.php',
                 'acme/tools:assets/'                                      => 'config/acme-assets',
+                'acme/tools:rules.conf'                                   => [
+                    'to'   => '[web-root]/.htaccess',
+                    'mode' => 'append',
+                ],
                 'acme/bundle'                                             => $this->root . '/elsewhere/',
             ]],
         ]));
 
-        self::assertSame([
-            'acme/some-mu-plugin:loader.php' => [
-                'package' => 'acme/some-mu-plugin',
-                'path'    => 'loader.php',
-                'dir'     => $this->root . '/public/wp-content/mu-plugins',
-                'name'    => 'loader.php',
-            ],
-            'wpackagist-plugin/redis-cache:includes/object-cache.php' => [
-                'package' => 'wpackagist-plugin/redis-cache',
-                'path'    => 'includes/object-cache.php',
-                'dir'     => $this->root . '/public/wp-content',
-                'name'    => 'object-cache.php',
-            ],
-            'acme/tools:assets' => [
-                'package' => 'acme/tools',
-                'path'    => 'assets',
-                'dir'     => $this->root . '/config',
-                'name'    => 'acme-assets',
-            ],
-            'acme/bundle' => [
-                'package' => 'acme/bundle',
-                'path'    => '',
-                'dir'     => $this->root . '/elsewhere',
-                'name'    => '',
-            ],
-        ], $paths->copyTargets());
+        $entries = $paths->copyTargets();
+
+        self::assertSame(
+            ['acme/bundle', 'acme/some-mu-plugin:loader.php', 'acme/tools:assets', 'acme/tools:rules.conf',
+             'wpackagist-plugin/redis-cache:includes/object-cache.php'],
+            array_keys($entries)
+        );
+
+        // Placeholder, keeping the name.
+        $loader = $entries['acme/some-mu-plugin:loader.php'];
+        self::assertSame($this->root . '/public/wp-content/mu-plugins', $loader['dir']);
+        self::assertSame('loader.php', $loader['name']);
+        // Exact path: rename (here the same name) into its parent folder.
+        $dropIn = $entries['wpackagist-plugin/redis-cache:includes/object-cache.php'];
+        self::assertSame($this->root . '/public/wp-content', $dropIn['dir']);
+        self::assertSame('object-cache.php', $dropIn['name']);
+        // Folder rename, relative to the project root.
+        self::assertSame($this->root . '/config', $entries['acme/tools:assets']['dir']);
+        self::assertSame('acme-assets', $entries['acme/tools:assets']['name']);
+        // Whole package into an absolute folder.
+        self::assertSame($this->root . '/elsewhere', $entries['acme/bundle']['dir']);
+        self::assertSame('', $entries['acme/bundle']['name']);
+
+        // Defaults and options.
+        self::assertSame('overwrite', $entries['acme/bundle']['mode']);
+        self::assertTrue($entries['acme/bundle']['gitignore']);
+        self::assertSame('append', $entries['acme/tools:rules.conf']['mode']);
+        self::assertFalse($entries['acme/tools:rules.conf']['gitignore']);
+        self::assertSame('#', $entries['acme/tools:rules.conf']['comment']);
+        self::assertSame('.htaccess', $entries['acme/tools:rules.conf']['name']);
+        self::assertSame('composer.json', $entries['acme/bundle']['source']);
+
         self::assertSame([], (new ProjectPaths($this->composer()))->copyTargets());
+    }
+
+    public function testCopyToFalseIsIgnoredForTheProject(): void
+    {
+        $paths = new ProjectPaths(
+            $this->composer(['wp-core-installer' => ['copy-to' => ['acme/tools:x.php' => false]]])
+        );
+
+        self::assertSame([], $paths->copyTargets());
     }
 
     public function testSharedDirs(): void
@@ -260,6 +279,26 @@ final class ProjectPathsTest extends TestCase
                 static fn (ProjectPaths $p): array => $p->copyTargets(),
                 'keys must look like "vendor/package" or "vendor/package:path/in/package", "kinsta" given',
             ],
+            'copy-to unknown mode' => [
+                ['wp-core-installer' => ['copy-to' => ['acme/tools:a.php' => ['to' => 'x/', 'mode' => 'merge']]]],
+                static fn (ProjectPaths $p): array => $p->copyTargets(),
+                'mode must be one of overwrite, if-missing, append, prepend, "merge" given',
+            ],
+            'copy-to append on a whole package' => [
+                ['wp-core-installer' => ['copy-to' => ['acme/tools' => ['to' => 'x/', 'mode' => 'append']]]],
+                static fn (ProjectPaths $p): array => $p->copyTargets(),
+                'mode "append" works on a single file',
+            ],
+            'copy-to unknown option' => [
+                ['wp-core-installer' => ['copy-to' => ['acme/tools:a.php' => ['to' => 'x/', 'overwrite' => true]]]],
+                static fn (ProjectPaths $p): array => $p->copyTargets(),
+                'has an unknown option "overwrite"',
+            ],
+            'copy-to unknown placeholder' => [
+                ['wp-core-installer' => ['copy-to' => ['acme/tools:a.php' => '[uploads]/']]],
+                static fn (ProjectPaths $p): array => $p->copyTargets(),
+                'uses an unknown placeholder [uploads]',
+            ],
             'copy-to path is absolute' => [
                 ['wp-core-installer' => ['copy-to' => ['acme/tools:/includes/object-cache.php' => 'web/']]],
                 static fn (ProjectPaths $p): array => $p->copyTargets(),
@@ -273,7 +312,7 @@ final class ProjectPathsTest extends TestCase
             'copy-to target not a string' => [
                 ['wp-core-installer' => ['copy-to' => ['acme/tools:loader.php' => true]]],
                 static fn (ProjectPaths $p): array => $p->copyTargets(),
-                'copy-to.acme/tools:loader.php in composer.json must be a string, bool given',
+                'copy-to.acme/tools:loader.php.to in composer.json must be a string, bool given',
             ],
             'mu-plugins dir not a string' => [
                 ['wp-core-installer' => ['mu-plugins-dir' => false]],
