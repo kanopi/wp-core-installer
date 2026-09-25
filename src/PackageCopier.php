@@ -10,34 +10,42 @@ use Composer\Package\PackageInterface;
 use Composer\Util\Filesystem;
 
 /**
- * Copies a package's files into a directory that other files share
- * (extra.wp-core-installer.copy-to), e.g. the Kinsta MU plugin into
- * wp-content/mu-plugins/.
+ * Copies files out of installed packages into folders other files share
+ * (extra.wp-core-installer.copy-to).
  *
- * Why not install the package there directly? Composer treats a package's
- * install folder as its own: it empties the folder on install and deletes it
- * on update or removal. Pointed at mu-plugins/, that wipes every other
- * mu-plugin (see #46). Instead, the package installs into its own folder
- * (e.g. under vendor/) and this class copies its files across:
+ * WordPress only loads some files from fixed, shared places: must-use
+ * plugins from the top of wp-content/mu-plugins/, drop-ins such as
+ * object-cache.php from wp-content/. A package can't be *installed* there,
+ * because Composer treats a package's install folder as its own (it empties
+ * it on install and deletes it on update or removal; see #46). So the
+ * package installs normally and the files that must live elsewhere are
+ * copied out:
  *
- *   - only new or changed files are written;
- *   - files the package no longer ships are deleted, as are all its files
- *     when it is removed or dropped from copy-to;
- *   - a manifest per package records exactly which files were placed, and
- *     nothing outside that record is ever overwritten or deleted: an
- *     existing file with different content is skipped with a warning.
- *
- *   "extra": {
- *       "installer-paths": {
- *           "public/wp-content/mu-plugins/vendor/kinsta/kinsta-mu-plugins/": ["kinsta/kinsta-mu-plugins"]
- *       },
- *       "wp-core-installer": {
- *           "copy-to": { "kinsta/kinsta-mu-plugins": "wp-content/mu-plugins" }
- *       }
+ *   "copy-to": {
+ *       "acme/some-mu-plugin:acme-loader.php":                   "web/wp-content/mu-plugins/",
+ *       "wpackagist-plugin/redis-cache:includes/object-cache.php": "web/wp-content/object-cache.php",
+ *       "acme/tools:assets":                                       "web/app/acme-assets",
+ *       "acme/mu-bundle":                                          "web/wp-content/mu-plugins"
  *   }
  *
- * Targets are relative to the web-root (or absolute). A top-level
- * composer.json in the package is not copied.
+ * Works for any package type. A "vendor/package:path" entry copies that
+ * file or folder: a destination ending in "/" is a folder to copy it into
+ * (keeping its name), anything else is the exact destination path (so it
+ * can be renamed). A bare "vendor/package" entry copies all of the
+ * package's top-level entries except composer.json into the destination
+ * folder. Destinations are relative to the project root, like
+ * installer-paths.
+ *
+ * Safety:
+ *   - only new or changed files are written;
+ *   - each entry has a manifest recording exactly what it placed; files it
+ *     stops placing are deleted, as is everything it placed when the entry
+ *     or the package goes away;
+ *   - nothing outside that record is ever overwritten or deleted: an
+ *     existing file with identical content is adopted, one with different
+ *     content is skipped with a warning;
+ *   - an entry whose copy would land on the package's own install folder is
+ *     refused.
  */
 class PackageCopier
 {
@@ -53,29 +61,29 @@ class PackageCopier
     }
 
     /**
-     * Bring every copy-to target in line with its installed package, and
-     * clean up after packages that were removed or dropped from copy-to.
+     * Bring every copy-to entry in line with its installed package, and clean
+     * up after entries whose package was removed or that were dropped.
      */
     public function run(): void
     {
-        $targets   = $this->paths->copyTargets();
+        $entries   = $this->paths->copyTargets();
         $installed = [];
 
         foreach ($this->composer->getRepositoryManager()->getLocalRepository()->getPackages() as $package) {
             $installed[strtolower($package->getName())] = $package;
         }
 
-        foreach ($targets as $name => $target) {
-            if (isset($installed[$name])) {
-                $this->copyPackage($installed[$name], $target);
+        foreach ($entries as $key => $entry) {
+            if (isset($installed[$entry['package']])) {
+                $this->copyEntry($key, $installed[$entry['package']], $entry['path'], $entry['dir'], $entry['name']);
             } else {
-                $this->removePlaced($name, 'it is not installed');
+                $this->removePlaced($key, sprintf('%s is not installed', $entry['package']));
             }
         }
 
-        foreach ($this->recordedPackages() as $name) {
-            if (!isset($targets[$name])) {
-                $this->removePlaced($name, 'it is no longer listed in copy-to');
+        foreach ($this->recordedEntries() as $key) {
+            if (!isset($entries[$key])) {
+                $this->removePlaced($key, 'it is no longer listed in copy-to');
             }
         }
     }
@@ -90,8 +98,8 @@ class PackageCopier
     {
         $entries = [];
 
-        foreach ($this->recordedPackages() as $name) {
-            $manifest = DeployManifest::load($this->manifestPath($name));
+        foreach ($this->recordedEntries() as $key) {
+            $manifest = DeployManifest::load($this->manifestPath($key));
 
             if ($manifest === null) {
                 continue;
@@ -110,42 +118,56 @@ class PackageCopier
         return $entries;
     }
 
-    private function copyPackage(PackageInterface $package, string $target): void
+    /**
+     * @param string $path   Path inside the package ('' = the whole package).
+     * @param string $target Absolute folder the copy lands in.
+     * @param string $name   Name of the copied entry inside $target ('' for a whole package).
+     */
+    private function copyEntry(string $key, PackageInterface $package, string $path, string $target, string $name): void
     {
-        $name   = strtolower($package->getName());
-        $raw    = (string) $this->composer->getInstallationManager()->getInstallPath($package);
-        $source = str_replace('\\', '/', realpath($raw) ?: $raw);
+        $raw  = (string) $this->composer->getInstallationManager()->getInstallPath($package);
+        $base = rtrim(str_replace('\\', '/', realpath($raw) ?: $raw), '/');
 
-        if (!is_dir($source)) {
+        if (!is_dir($base)) {
             $this->io->writeError(sprintf(
-                '  - <warning>copy-to: %s has no files at %s; skipping.</warning>',
+                '  - <warning>copy-to: %s has no files at %s; skipping %s.</warning>',
                 $package->getPrettyName(),
-                $source
+                $base,
+                $key
             ));
             return;
         }
 
-        $files = $this->sourceFiles($source);
+        $sources = $this->sourcesFor($base, $path, $name);
 
-        if (($problem = $this->overlapProblem($source, $target, $files)) !== null) {
+        if ($sources === null) {
+            $this->io->writeError(sprintf(
+                '  - <warning>copy-to: %s does not contain "%s"; nothing to copy for %s.</warning>',
+                $package->getPrettyName(),
+                $path,
+                $key
+            ));
+            $sources = [];
+        }
+
+        if (($problem = $this->overlapProblem($base, $target, array_keys($sources))) !== null) {
             $this->io->writeError(sprintf(
                 "  - <warning>copy-to: not copying %s. %s</warning>\n"
-                . "    Point its installer-paths entry at a folder of its own, e.g. inside vendor-dir.",
-                $package->getPrettyName(),
+                . "    Install the package somewhere else (installer-paths), or copy a file out of it instead.",
+                $key,
                 $problem
             ));
             return;
         }
 
-        $previous = DeployManifest::load($this->manifestPath($name));
+        $previous = DeployManifest::load($this->manifestPath($key));
         $owned    = array_fill_keys($previous->files ?? [], true);
         $placed   = [];
         $skipped  = [];
         $counts   = ['created' => 0, 'updated' => 0, 'unchanged' => 0];
 
-        foreach ($files as $relative) {
-            $from = $source . '/' . $relative;
-            $to   = $target . '/' . $relative;
+        foreach ($sources as $relative => $from) {
+            $to = $target . '/' . $relative;
 
             if (is_file($to) && $this->sameContent($from, $to)) {
                 $placed[] = $relative;
@@ -171,25 +193,25 @@ class PackageCopier
         }
 
         $removed = 0;
-        foreach (array_diff(array_keys($owned), $files) as $stale) {
-            $removed += $this->deletePlaced($target, $stale) ? 1 : 0;
+        foreach (array_diff(array_keys($owned), array_keys($sources)) as $stale) {
+            $removed += $this->deletePlaced($target, (string) $stale) ? 1 : 0;
         }
 
         $manifest = new DeployManifest(
-            $name,
+            $key,
             $package->getVersion(),
             (string) ($package->getDistReference() ?? $package->getSourceReference() ?? ''),
             $target,
             '',
             $placed
         );
-        if (!$manifest->save($this->manifestPath($name))) {
-            $this->io->writeError(sprintf('  - <warning>copy-to: could not record files for %s.</warning>', $name));
+        if (!$manifest->save($this->manifestPath($key))) {
+            $this->io->writeError(sprintf('  - <warning>copy-to: could not record files for %s.</warning>', $key));
         }
 
         $this->io->write(sprintf(
             '  - copy-to: %s → %s: %d created, %d updated, %d unchanged%s.',
-            $package->getPrettyName(),
+            $key,
             $this->display($target),
             $counts['created'],
             $counts['updated'],
@@ -199,13 +221,12 @@ class PackageCopier
 
         if ($skipped !== []) {
             $this->io->writeError(sprintf(
-                "  - <warning>copy-to: %d file(s) from %s already exist in %s and were not placed by it;"
+                "  - <warning>copy-to: %d file(s) for %s already exist in %s and were not placed by it;"
                 . " left untouched:</warning>\n"
                 . "      %s\n"
-                . "    If they are an older copy of the package (e.g. previously committed), delete them once"
-                . " so it can take over.",
+                . "    If they are an older copy of the same files, delete them once so copy-to can take over.",
                 count($skipped),
-                $package->getPrettyName(),
+                $key,
                 $this->display($target),
                 implode("\n      ", array_slice($skipped, 0, 10)) . (count($skipped) > 10 ? "\n      …" : '')
             ));
@@ -213,26 +234,78 @@ class PackageCopier
     }
 
     /**
-     * Why copying $source into $target would damage the package itself, if
-     * it would: copying onto its own install folder, or into a path that
-     * contains it (the next copy would recurse into, or overwrite, itself).
+     * Files to copy for one entry: target-relative path => absolute source.
+     * The copied file or folder is named $name in the target (a rename when
+     * it differs from basename($path)). Null when $path does not exist.
      *
-     * @param string[] $files
+     * @return array<string, string>|null
      */
-    private function overlapProblem(string $source, string $target, array $files): ?string
+    private function sourcesFor(string $base, string $path, string $name): ?array
     {
-        if ($source === $target) {
-            return sprintf(
-                'It is installed into %s itself, which Composer empties and deletes.',
-                $this->display($target)
-            );
+        if ($path === '') {
+            $sources = $this->filesUnder($base, '');
+            unset($sources['composer.json']);
+
+            return $sources;
         }
 
-        foreach (array_unique(array_map(static fn (string $f): string => explode('/', $f)[0], $files)) as $top) {
+        $source = $base . '/' . $path;
+
+        if (is_file($source)) {
+            return [$name => $source];
+        }
+
+        if (is_dir($source)) {
+            return $this->filesUnder($source, $name . '/');
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string, string> "$prefix<relative path>" => absolute path, sorted.
+     */
+    private function filesUnder(string $dir, string $prefix): array
+    {
+        $files    = [];
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::UNIX_PATHS)
+        );
+
+        /** @var \SplFileInfo $file */
+        foreach ($iterator as $file) {
+            if ($file->isFile()) {
+                $pathname                  = str_replace('\\', '/', $file->getPathname());
+                $files[$prefix . substr($pathname, strlen($dir) + 1)] = $pathname;
+            }
+        }
+
+        ksort($files);
+
+        return $files;
+    }
+
+    /**
+     * Why this copy would damage the package itself, if it would: copying
+     * onto (or into a folder containing) its own install folder, or into a
+     * target inside the package (every run would copy its own output).
+     *
+     * @param string[] $relatives Target-relative paths that would be written.
+     */
+    private function overlapProblem(string $base, string $target, array $relatives): ?string
+    {
+        if ($base === $target || str_starts_with($target . '/', $base . '/')) {
+            return sprintf('The target %s is inside the package\'s own install folder.', $this->display($target));
+        }
+
+        foreach (array_unique(array_map(static fn (string $f): string => explode('/', $f)[0], $relatives)) as $top) {
             $destination = $target . '/' . $top;
 
-            if ($source === $destination || str_starts_with($source . '/', $destination . '/')) {
-                return sprintf('Its files would be copied over its own install folder (%s).', $this->display($source));
+            if ($base === $destination || str_starts_with($base . '/', $destination . '/')) {
+                return sprintf(
+                    'It would be copied over the package\'s own install folder (%s).',
+                    $this->display($base)
+                );
             }
         }
 
@@ -240,35 +313,11 @@ class PackageCopier
     }
 
     /**
-     * @return string[] Package-relative file paths, forward slashes, sorted.
+     * Remove everything recorded for an entry (package gone or entry dropped).
      */
-    private function sourceFiles(string $source): array
+    private function removePlaced(string $key, string $reason): void
     {
-        $files    = [];
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($source, \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::UNIX_PATHS)
-        );
-
-        /** @var \SplFileInfo $file */
-        foreach ($iterator as $file) {
-            $relative = substr(str_replace('\\', '/', $file->getPathname()), strlen($source) + 1);
-
-            if ($file->isFile() && $relative !== 'composer.json') {
-                $files[] = $relative;
-            }
-        }
-
-        sort($files);
-
-        return $files;
-    }
-
-    /**
-     * Remove everything recorded for $name (package gone or unlisted).
-     */
-    private function removePlaced(string $name, string $reason): void
-    {
-        $manifest = DeployManifest::load($this->manifestPath($name));
+        $manifest = DeployManifest::load($this->manifestPath($key));
 
         if ($manifest === null) {
             return;
@@ -279,12 +328,12 @@ class PackageCopier
             $removed += $this->deletePlaced($manifest->webRoot, $file) ? 1 : 0;
         }
 
-        @unlink($this->manifestPath($name));
+        @unlink($this->manifestPath($key));
 
         $this->io->write(sprintf(
             '  - copy-to: removed %d file(s) placed for %s from %s, because %s.',
             $removed,
-            $name,
+            $key,
             $this->display($manifest->webRoot),
             $reason
         ));
@@ -320,22 +369,22 @@ class PackageCopier
     }
 
     /**
-     * Package names that currently have a copy-to manifest.
+     * copy-to entries that currently have a manifest.
      *
      * @return string[]
      */
-    private function recordedPackages(): array
+    private function recordedEntries(): array
     {
-        $names = [];
+        $keys = [];
 
         foreach (glob($this->manifestDir() . '/*.json') ?: [] as $file) {
             $manifest = DeployManifest::load($file);
             if ($manifest !== null) {
-                $names[] = $manifest->package;
+                $keys[] = $manifest->package;
             }
         }
 
-        return $names;
+        return $keys;
     }
 
     private function manifestDir(): string
@@ -343,9 +392,9 @@ class PackageCopier
         return $this->paths->vendorDir() . '/.wordpress-core-staging/copy-to';
     }
 
-    private function manifestPath(string $name): string
+    private function manifestPath(string $key): string
     {
-        return $this->manifestDir() . '/' . str_replace('/', '--', $name) . '.json';
+        return $this->manifestDir() . '/' . rawurlencode($key) . '.json';
     }
 
     private function sameContent(string $a, string $b): bool

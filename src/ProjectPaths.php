@@ -99,10 +99,20 @@ class ProjectPaths
     }
 
     /**
-     * extra.wp-core-installer.copy-to: package name => absolute target
-     * directory (relative targets resolve against the web-root).
+     * extra.wp-core-installer.copy-to entries: copy a file or folder out of
+     * an installed package (any type) to any path in the project.
      *
-     * @return array<string, string>
+     *   "vendor/package:path/in/pkg" => "dest/dir/"      into dest/dir/, keeping its name
+     *   "vendor/package:path/in/pkg" => "dest/new-name"  to exactly dest/new-name (rename)
+     *   "vendor/package"             => "dest/dir"       every top-level entry into dest/dir/
+     *
+     * Destinations are relative to the project root (like installer-paths)
+     * or absolute. A trailing "/" marks a destination directory.
+     *
+     * @return array<string, array{package: string, path: string, dir: string, name: string}>
+     *         Keyed by the normalised entry. "dir" is the absolute folder the
+     *         copy lands in; "name" is the copied entry's name inside it
+     *         ('' for a whole package).
      */
     public function copyTargets(): array
     {
@@ -112,29 +122,53 @@ class ProjectPaths
         if (!is_array($setting)) {
             throw new \UnexpectedValueException(sprintf(
                 'WP Core Installer: %s in composer.json must be an object like'
-                . ' {"vendor/package": "wp-content/mu-plugins"}.',
+                . ' {"vendor/package:file.php": "web/wp-content/mu-plugins/"}.',
                 $label
             ));
         }
 
-        $targets = [];
+        $entries = [];
 
-        foreach ($setting as $package => $target) {
-            if (!is_string($package) || preg_match('{^[a-z0-9_.-]+/[a-z0-9_.-]+$}i', $package) !== 1) {
+        foreach ($setting as $key => $destination) {
+            $key = (string) $key;
+
+            if (preg_match('{^([a-z0-9_.-]+/[a-z0-9_.-]+)(?::(.+))?$}i', $key, $match) !== 1) {
                 throw new \UnexpectedValueException(sprintf(
-                    'WP Core Installer: %s keys must be package names like "vendor/package", "%s" given.',
+                    'WP Core Installer: %s keys must look like "vendor/package" or "vendor/package:path/in/package",'
+                    . ' "%s" given.',
                     $label,
-                    (string) $package
+                    $key
                 ));
             }
 
-            $targets[strtolower($package)] = $this->resolve(
-                $this->webRoot(),
-                self::requireString($target, $label . '.' . $package)
-            );
+            $package = strtolower($match[1]);
+            $rawPath = str_replace('\\', '/', $match[2] ?? '');
+            $path    = trim($rawPath, '/');
+
+            if (
+                ($rawPath !== '' && ($this->filesystem->isAbsolutePath($rawPath) || $path === ''))
+                || in_array('..', explode('/', $path), true)
+            ) {
+                throw new \UnexpectedValueException(sprintf(
+                    'WP Core Installer: the path in %s "%s" must be relative to the package, without "..".',
+                    $label,
+                    $key
+                ));
+            }
+
+            $raw      = trim(str_replace('\\', '/', self::requireString($destination, $label . '.' . $key)));
+            $resolved = $this->resolve($this->projectRoot(), $raw);
+            $isDir    = $path === '' || $raw === '' || $raw === '.' || str_ends_with($raw, '/');
+
+            $entries[$path === '' ? $package : $package . ':' . $path] = [
+                'package' => $package,
+                'path'    => $path,
+                'dir'     => $isDir ? $resolved : dirname($resolved),
+                'name'    => $path === '' ? '' : ($isDir ? basename($path) : basename($resolved)),
+            ];
         }
 
-        return $targets;
+        return $entries;
     }
 
     /**

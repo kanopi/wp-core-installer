@@ -1,7 +1,11 @@
 #!/usr/bin/env bats
 #
-# copy-to: packages that must sit in a shared folder (#46), modelled on the
-# Kinsta MU plugin (kinsta-mu-plugins.php + kinsta-mu-plugins/ in mu-plugins/).
+# copy-to (#46): copying files out of installed packages into folders other
+# files share (mu-plugins/, wp-content/). Two shapes are covered:
+#   - "vendor/package:path" — one file or folder out of a normally installed
+#     package (a mu-plugin loader, an object-cache.php drop-in);
+#   - "vendor/package" — a whole package laid out for a shared folder
+#     (loader file + folder of the same name, e.g. host mu-plugin bundles).
 
 load 'helpers'
 
@@ -55,7 +59,7 @@ configure() {
 
 use_copy_to() {
   configure "public/wp-content/mu-plugins/vendor/kinsta/kinsta-mu-plugins/" \
-    '"copy-to": {"kinsta/kinsta-mu-plugins": "wp-content/mu-plugins"}'
+    '"copy-to": {"kinsta/kinsta-mu-plugins": "public/wp-content/mu-plugins"}'
 }
 
 install_kinsta() {
@@ -163,19 +167,176 @@ install_kinsta() {
   # composer/installers' default for this package: mu-plugins/kinsta-mu-plugins/,
   # the same path as the package's own kinsta-mu-plugins/ directory.
   configure "public/wp-content/mu-plugins/kinsta-mu-plugins/" \
-    '"copy-to": {"kinsta/kinsta-mu-plugins": "wp-content/mu-plugins"}'
+    '"copy-to": {"kinsta/kinsta-mu-plugins": "public/wp-content/mu-plugins"}'
 
   run install_kinsta 3.5.0
   [ "$status" -eq 0 ]
 
-  [[ "$output" == *"would be copied over its own install folder"* ]] || false
+  [[ "$output" == *"would be copied over the package's own install folder"* ]] || false
   [ ! -e "${MU}/kinsta-mu-plugins.php" ]
 }
 
-@test "an invalid copy-to setting fails clearly" {
-  set_extra '{"wordpress-install-dir": "public", "wp-core-installer": {"copy-to": {"not a package": "wp-content"}}}'
-
+@test "invalid copy-to keys fail clearly" {
+  set_extra '{"wordpress-install-dir": "public", "wp-core-installer": {"copy-to": {"not a package": "public/wp-content/"}}}'
   run install_core
   [ "$status" -ne 0 ]
-  [[ "$output" == *'copy-to keys must be package names like "vendor/package"'* ]] || false
+  [[ "$output" == *'keys must look like "vendor/package" or "vendor/package:path/in/package"'* ]] || false
+
+  set_extra '{"wordpress-install-dir": "public", "wp-core-installer": {"copy-to": {"acme/tools:../../etc/passwd": "public/wp-content/"}}}'
+  run install_core
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'must be relative to the package, without ".."'* ]] || false
+}
+
+# ── "vendor/package:path" entries ───────────────────────────────────────────
+
+# A normal plugin package, installed to wp-content/plugins/tools/, shipping
+# files that have to live elsewhere. Usage: tools_release <version> [variant]
+# variant "v2": changed loader, no assets/old.css.
+tools_release() {
+  php -r '
+    [$_, $dir, $version, $variant] = $argv + [3 => ""];
+    $zip = new ZipArchive();
+    $zip->open("$dir/tools-$version.zip", ZipArchive::CREATE | ZipArchive::OVERWRITE);
+    $zip->addFromString("composer.json", json_encode([
+        "name" => "acme/tools", "version" => $version,
+        "type" => "wordpress-plugin", "require" => ["composer/installers" => "*"],
+    ]));
+    $zip->addFromString("tools.php", "<?php // plugin\n");
+    $zip->addFromString("includes/object-cache.php", "<?php // drop-in $version\n");
+    $zip->addFromString("loader.php", "<?php // loader $version\n");
+    $zip->addFromString("assets/app.css", "body{}\n");
+    if ($variant !== "v2") { $zip->addFromString("assets/old.css", "old{}\n"); }
+    $zip->close();
+  ' "$(native_path "${WORK}/artifacts")" "$1" "${2:-}"
+}
+
+# $1 = copy-to JSON members.
+configure_tools() {
+  php -r '
+    [$_, $file, $artifacts, $copyTo] = $argv;
+    $j = json_decode(file_get_contents($file));
+    $j->repositories->artifacts = (object) ["type" => "artifact", "url" => $artifacts];
+    $j->extra = json_decode("{
+      \"wordpress-install-dir\": \"public\",
+      \"installer-paths\": { \"public/wp-content/plugins/{\$name}/\": [\"type:wordpress-plugin\"] },
+      \"wp-core-installer\": { \"copy-to\": {" . $copyTo . "} }
+    }");
+    file_put_contents($file, json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+  ' "${PROJ}/composer.json" "$(native_path "${WORK}/artifacts")" "$1"
+}
+
+install_tools() {
+  composer_in_project require "kanopi/wp-core-installer:*" "fake/wordpress-core:*" "acme/tools:$1"
+}
+
+@test "package:path copies one nested file out of a normally installed package" {
+  tools_release 1.0.0
+  configure_tools '"acme/tools:includes/object-cache.php": "public/wp-content/"'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "${PROJ}/public/wp-content/object-cache.php")" = "<?php // drop-in 1.0.0" ]
+  [ -f "${PROJ}/public/wp-content/plugins/tools/tools.php" ]
+  [ -f "${PROJ}/public/wp-content/plugins/tools/includes/object-cache.php" ]
+
+  block="$(sed -n '/packages:begin/,/packages:end/p' "${PROJ}/.gitignore")"
+  grep -qx '/public/wp-content/object-cache.php' <<<"$block"
+  grep -qx '/public/wp-content/plugins/tools/'   <<<"$block"
+  ! grep -qx '/public/wp-content/' <<<"$block" || false
+}
+
+@test "package:path copies a file and a folder, keeping their names" {
+  tools_release 1.0.0
+  configure_tools '"acme/tools:loader.php": "public/wp-content/mu-plugins/", "acme/tools:assets": "public/wp-content/mu-plugins/"'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+
+  [ -f "${MU}/loader.php" ]
+  [ -f "${MU}/assets/app.css" ]
+  [ -f "${MU}/assets/old.css" ]
+  [ -f "${MU}/my-plugin.php" ]
+  grep -qx '/public/wp-content/mu-plugins/loader.php' "${PROJ}/.gitignore"
+  grep -qx '/public/wp-content/mu-plugins/assets/'   "${PROJ}/.gitignore"
+}
+
+@test "package:path follows package updates and drops files the package stops shipping" {
+  tools_release 1.0.0
+  tools_release 2.0.0 v2
+  configure_tools '"acme/tools:loader.php": "public/wp-content/mu-plugins/", "acme/tools:assets": "public/wp-content/mu-plugins/"'
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+
+  run install_tools 2.0.0
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "${MU}/loader.php")" = "<?php // loader 2.0.0" ]
+  [ -f "${MU}/assets/app.css" ]
+  [ ! -e "${MU}/assets/old.css" ]
+  [ -f "${MU}/my-plugin.php" ]
+}
+
+@test "dropping one entry removes only what that entry placed" {
+  tools_release 1.0.0
+  configure_tools '"acme/tools:loader.php": "public/wp-content/mu-plugins/", "acme/tools:includes/object-cache.php": "public/wp-content/"'
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+
+  configure_tools '"acme/tools:includes/object-cache.php": "public/wp-content/"'
+  run composer_in_project install
+  [ "$status" -eq 0 ]
+
+  [ ! -e "${MU}/loader.php" ]
+  [ -f "${PROJ}/public/wp-content/object-cache.php" ]
+  [ -f "${MU}/my-plugin.php" ]
+  ! grep -qx '/public/wp-content/mu-plugins/loader.php' "${PROJ}/.gitignore" || false
+}
+
+@test "a destination without a trailing slash renames the file" {
+  tools_release 1.0.0
+  configure_tools '"acme/tools:loader.php": "public/wp-content/mu-plugins/000-acme-tools.php"'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "${MU}/000-acme-tools.php")" = "<?php // loader 1.0.0" ]
+  [ ! -e "${MU}/loader.php" ]
+  grep -qx '/public/wp-content/mu-plugins/000-acme-tools.php' "${PROJ}/.gitignore"
+}
+
+@test "a folder can be renamed, and destinations can be anywhere in the project" {
+  tools_release 1.0.0
+  tools_release 2.0.0 v2
+  configure_tools '"acme/tools:assets": "public/app/acme-assets", "acme/tools:loader.php": "config/acme/loader.php"'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+  [ -f "${PROJ}/public/app/acme-assets/app.css" ]
+  [ -f "${PROJ}/public/app/acme-assets/old.css" ]
+  [ ! -e "${PROJ}/public/app/assets" ]
+  [ "$(cat "${PROJ}/config/acme/loader.php")" = "<?php // loader 1.0.0" ]
+  grep -qx '/public/app/acme-assets/' "${PROJ}/.gitignore"
+  grep -qx '/config/acme/loader.php'  "${PROJ}/.gitignore"
+
+  run install_tools 2.0.0
+  [ "$status" -eq 0 ]
+  [ ! -e "${PROJ}/public/app/acme-assets/old.css" ]
+  [ "$(cat "${PROJ}/config/acme/loader.php")" = "<?php // loader 2.0.0" ]
+
+  run composer_in_project remove acme/tools
+  [ "$status" -eq 0 ]
+  [ ! -e "${PROJ}/public/app/acme-assets" ]
+  [ ! -e "${PROJ}/config/acme/loader.php" ]
+}
+
+@test "a path the package doesn't contain warns and copies nothing" {
+  tools_release 1.0.0
+  configure_tools '"acme/tools:nope.php": "public/wp-content/mu-plugins/"'
+
+  run install_tools 1.0.0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'acme/tools does not contain "nope.php"'* ]] || false
+  [ ! -e "${MU}/nope.php" ]
 }

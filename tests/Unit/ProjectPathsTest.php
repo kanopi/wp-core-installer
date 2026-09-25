@@ -142,19 +142,43 @@ final class ProjectPathsTest extends TestCase
         self::assertFalse($paths->configBool('something-else', false));
     }
 
-    public function testCopyTargetsResolveAgainstTheWebRoot(): void
+    public function testCopyTargets(): void
     {
         $paths = new ProjectPaths($this->composer([
             'wordpress-install-dir' => 'public',
             'wp-core-installer'     => ['copy-to' => [
-                'Kinsta/Kinsta-MU-Plugins' => 'wp-content/mu-plugins',
-                'acme/dropin'              => $this->root . '/elsewhere/',
+                'Acme/Some-MU-Plugin:loader.php'                          => 'public/wp-content/mu-plugins/',
+                'wpackagist-plugin/redis-cache:includes/object-cache.php' => 'public/wp-content/object-cache.php',
+                'acme/tools:assets/'                                      => 'config/acme-assets',
+                'acme/bundle'                                             => $this->root . '/elsewhere/',
             ]],
         ]));
 
         self::assertSame([
-            'kinsta/kinsta-mu-plugins' => $this->root . '/public/wp-content/mu-plugins',
-            'acme/dropin'              => $this->root . '/elsewhere',
+            'acme/some-mu-plugin:loader.php' => [
+                'package' => 'acme/some-mu-plugin',
+                'path'    => 'loader.php',
+                'dir'     => $this->root . '/public/wp-content/mu-plugins',
+                'name'    => 'loader.php',
+            ],
+            'wpackagist-plugin/redis-cache:includes/object-cache.php' => [
+                'package' => 'wpackagist-plugin/redis-cache',
+                'path'    => 'includes/object-cache.php',
+                'dir'     => $this->root . '/public/wp-content',
+                'name'    => 'object-cache.php',
+            ],
+            'acme/tools:assets' => [
+                'package' => 'acme/tools',
+                'path'    => 'assets',
+                'dir'     => $this->root . '/config',
+                'name'    => 'acme-assets',
+            ],
+            'acme/bundle' => [
+                'package' => 'acme/bundle',
+                'path'    => '',
+                'dir'     => $this->root . '/elsewhere',
+                'name'    => '',
+            ],
         ], $paths->copyTargets());
         self::assertSame([], (new ProjectPaths($this->composer()))->copyTargets());
     }
@@ -234,12 +258,22 @@ final class ProjectPathsTest extends TestCase
             'copy-to key not a package name' => [
                 ['wp-core-installer' => ['copy-to' => ['kinsta' => 'wp-content/mu-plugins']]],
                 static fn (ProjectPaths $p): array => $p->copyTargets(),
-                'copy-to keys must be package names like "vendor/package", "kinsta" given',
+                'keys must look like "vendor/package" or "vendor/package:path/in/package", "kinsta" given',
+            ],
+            'copy-to path is absolute' => [
+                ['wp-core-installer' => ['copy-to' => ['acme/tools:/includes/object-cache.php' => 'web/']]],
+                static fn (ProjectPaths $p): array => $p->copyTargets(),
+                'must be relative to the package, without ".."',
+            ],
+            'copy-to path escapes the package' => [
+                ['wp-core-installer' => ['copy-to' => ['acme/tools:../secrets.php' => 'wp-content']]],
+                static fn (ProjectPaths $p): array => $p->copyTargets(),
+                'must be relative to the package, without ".."',
             ],
             'copy-to target not a string' => [
-                ['wp-core-installer' => ['copy-to' => ['kinsta/kinsta-mu-plugins' => true]]],
+                ['wp-core-installer' => ['copy-to' => ['acme/tools:loader.php' => true]]],
                 static fn (ProjectPaths $p): array => $p->copyTargets(),
-                'copy-to.kinsta/kinsta-mu-plugins in composer.json must be a string, bool given',
+                'copy-to.acme/tools:loader.php in composer.json must be a string, bool given',
             ],
             'mu-plugins dir not a string' => [
                 ['wp-core-installer' => ['mu-plugins-dir' => false]],
