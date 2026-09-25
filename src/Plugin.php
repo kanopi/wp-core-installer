@@ -79,7 +79,8 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
      *   0. Make sure core is deployed.
      *   1. Create a starter wp-config.php when opted in and none exists.
      *   2. Scaffold the Composer autoloader mu-plugin.
-     *   3. Refresh the .gitignore block for all Composer-managed WP packages.
+     *   3. Copy copy-to packages into their shared target folders.
+     *   4. Refresh the .gitignore block for all Composer-managed WP packages.
      */
     public function onPostInstallOrUpdate(Event $event): void
     {
@@ -94,7 +95,10 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
 
         (new MuPluginScaffolder($this->composer, $this->io))->scaffold();
 
-        // ── 3. .gitignore packages block ──────────────────────────────────────
+        // ── 3. copy-to: place packages that must live in shared folders ───────
+        (new PackageCopier($this->composer, $this->io))->run();
+
+        // ── 4. .gitignore packages block ──────────────────────────────────────
         $this->io->write('<info>WP Core Installer:</info> Refreshing .gitignore for Composer-managed packages…');
 
         (new PackageGitignoreHandler(

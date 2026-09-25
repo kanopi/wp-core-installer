@@ -77,7 +77,12 @@ class PackageGitignoreHandler
         // `composer install` has run in a fresh checkout.
         $muPluginFile = (new MuPluginScaffolder($this->composer, $this->io))->resolveOutputPath();
 
-        $byType = $this->resolvePackagePaths($projectRoot, $vendorDirAbs);
+        $byType = $this->resolvePackagePaths($projectRoot, $vendorDirAbs, $paths->sharedDirs());
+
+        $copied = $this->copiedEntries($projectRoot, $vendorDirAbs);
+        if ($copied !== []) {
+            $byType['copied'] = $copied;
+        }
 
         $this->gitignoreManager->updatePackagesBlock($projectRoot, $vendorDirAbs, $byType, $muPluginFile);
     }
@@ -90,9 +95,10 @@ class PackageGitignoreHandler
      * Iterate every locally installed package, filter to WordPress content
      * types, and return their install paths grouped by section label.
      *
+     * @param string[] $sharedDirs Absolute paths of shared WordPress folders (never gitignored wholesale).
      * @return array<string, string[]>  e.g. ['plugins' => ['wp-content/plugins/akismet'], ...]
      */
-    private function resolvePackagePaths(string $projectRoot, string $vendorDirAbs): array
+    private function resolvePackagePaths(string $projectRoot, string $vendorDirAbs, array $sharedDirs): array
     {
         $installManager = $this->composer->getInstallationManager();
         $localRepo      = $this->composer->getRepositoryManager()->getLocalRepository();
@@ -124,6 +130,23 @@ class PackageGitignoreHandler
             // Resolve symlinks / relative segments so the comparison is reliable.
             $resolved = realpath($installPathAbs) ?: $installPathAbs;
             $relative = $this->gitignoreManager->relativeToProject($projectRoot, $resolved);
+
+            // Installed straight into a folder other files share (#46).
+            // Ignoring it would hide the project's own files, and Composer
+            // deletes the whole folder when this package updates or goes.
+            if (in_array(rtrim(str_replace('\\', '/', $resolved), '/'), $sharedDirs, true)) {
+                $this->io->writeError(sprintf(
+                    "  - <warning>%s is installed directly into %s, which other files share.</warning>\n"
+                    . "    Composer deletes that whole folder whenever %s is updated or removed.\n"
+                    . "    Give it its own installer-paths folder (e.g. inside vendor-dir) and use\n"
+                    . "    extra.wp-core-installer.copy-to to place its files. Not gitignoring %s.",
+                    $package->getPrettyName(),
+                    $relative,
+                    $package->getPrettyName(),
+                    $relative
+                ));
+                continue;
+            }
 
             if ($relative === $resolved) {
                 // relativeToProject returns the input unchanged when the path
@@ -168,6 +191,30 @@ class PackageGitignoreHandler
         }
 
         return $byType;
+    }
+
+    /**
+     * Top-level entries placed by copy-to, relative to the project, with a
+     * trailing slash for directories.
+     *
+     * @return string[]
+     */
+    private function copiedEntries(string $projectRoot, string $vendorDirAbs): array
+    {
+        $vendorRelative = $this->gitignoreManager->relativeToProject($projectRoot, $vendorDirAbs);
+        $entries        = [];
+
+        foreach ((new PackageCopier($this->composer, $this->io))->placedTopLevel() as $absolute => $isDir) {
+            $relative = $this->gitignoreManager->relativeToProject($projectRoot, $absolute);
+
+            if ($relative === $absolute || str_starts_with($relative . '/', $vendorRelative . '/')) {
+                continue;
+            }
+
+            $entries[] = $relative . ($isDir ? '/' : '');
+        }
+
+        return $entries;
     }
 
     // -------------------------------------------------------------------------

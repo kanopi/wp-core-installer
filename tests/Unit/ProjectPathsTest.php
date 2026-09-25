@@ -142,6 +142,39 @@ final class ProjectPathsTest extends TestCase
         self::assertFalse($paths->configBool('something-else', false));
     }
 
+    public function testCopyTargetsResolveAgainstTheWebRoot(): void
+    {
+        $paths = new ProjectPaths($this->composer([
+            'wordpress-install-dir' => 'public',
+            'wp-core-installer'     => ['copy-to' => [
+                'Kinsta/Kinsta-MU-Plugins' => 'wp-content/mu-plugins',
+                'acme/dropin'              => $this->root . '/elsewhere/',
+            ]],
+        ]));
+
+        self::assertSame([
+            'kinsta/kinsta-mu-plugins' => $this->root . '/public/wp-content/mu-plugins',
+            'acme/dropin'              => $this->root . '/elsewhere',
+        ], $paths->copyTargets());
+        self::assertSame([], (new ProjectPaths($this->composer()))->copyTargets());
+    }
+
+    public function testSharedDirs(): void
+    {
+        $paths = new ProjectPaths($this->composer([
+            'wordpress-install-dir' => 'web',
+            'wp-core-installer'     => ['mu-plugins-dir' => 'app/mu-plugins'],
+        ]));
+
+        self::assertSame([
+            $this->root . '/web/wp-content',
+            $this->root . '/web/wp-content/plugins',
+            $this->root . '/web/wp-content/themes',
+            $this->root . '/web/wp-content/mu-plugins',
+            $this->root . '/web/app/mu-plugins',
+        ], $paths->sharedDirs());
+    }
+
     /**
      * @return array<string, array{array<string, mixed>, callable(ProjectPaths): mixed, string}>
      */
@@ -192,6 +225,21 @@ final class ProjectPathsTest extends TestCase
                 ['wp-core-installer' => ['deploy-bundled' => ['plugins' => ['akismet/akismet.php']]]],
                 static fn (ProjectPaths $p): array => $p->bundledPaths(),
                 'must be a single theme or plugin name',
+            ],
+            'copy-to not an object' => [
+                ['wp-core-installer' => ['copy-to' => 'kinsta/kinsta-mu-plugins']],
+                static fn (ProjectPaths $p): array => $p->copyTargets(),
+                'copy-to in composer.json must be an object',
+            ],
+            'copy-to key not a package name' => [
+                ['wp-core-installer' => ['copy-to' => ['kinsta' => 'wp-content/mu-plugins']]],
+                static fn (ProjectPaths $p): array => $p->copyTargets(),
+                'copy-to keys must be package names like "vendor/package", "kinsta" given',
+            ],
+            'copy-to target not a string' => [
+                ['wp-core-installer' => ['copy-to' => ['kinsta/kinsta-mu-plugins' => true]]],
+                static fn (ProjectPaths $p): array => $p->copyTargets(),
+                'copy-to.kinsta/kinsta-mu-plugins in composer.json must be a string, bool given',
             ],
             'mu-plugins dir not a string' => [
                 ['wp-core-installer' => ['mu-plugins-dir' => false]],

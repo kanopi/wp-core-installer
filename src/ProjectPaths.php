@@ -79,6 +79,65 @@ class ProjectPaths
     }
 
     /**
+     * Web-root directories that hold more than one package's files. A
+     * package must never be *installed* into one of these (Composer deletes
+     * its whole install folder on update/remove); use copy-to instead.
+     *
+     * @return string[] Absolute paths.
+     */
+    public function sharedDirs(): array
+    {
+        $webRoot = $this->webRoot();
+
+        return array_values(array_unique([
+            $this->resolve($webRoot, 'wp-content'),
+            $this->resolve($webRoot, 'wp-content/plugins'),
+            $this->resolve($webRoot, 'wp-content/themes'),
+            $this->resolve($webRoot, 'wp-content/mu-plugins'),
+            $this->muPluginsDir(),
+        ]));
+    }
+
+    /**
+     * extra.wp-core-installer.copy-to: package name => absolute target
+     * directory (relative targets resolve against the web-root).
+     *
+     * @return array<string, string>
+     */
+    public function copyTargets(): array
+    {
+        $setting = $this->pluginConfig()['copy-to'] ?? [];
+        $label   = 'extra.wp-core-installer.copy-to';
+
+        if (!is_array($setting)) {
+            throw new \UnexpectedValueException(sprintf(
+                'WP Core Installer: %s in composer.json must be an object like'
+                . ' {"vendor/package": "wp-content/mu-plugins"}.',
+                $label
+            ));
+        }
+
+        $targets = [];
+
+        foreach ($setting as $package => $target) {
+            if (!is_string($package) || preg_match('{^[a-z0-9_.-]+/[a-z0-9_.-]+$}i', $package) !== 1) {
+                throw new \UnexpectedValueException(sprintf(
+                    'WP Core Installer: %s keys must be package names like "vendor/package", "%s" given.',
+                    $label,
+                    (string) $package
+                ));
+            }
+
+            $targets[strtolower($package)] = $this->resolve(
+                $this->webRoot(),
+                self::requireString($target, $label . '.' . $package)
+            );
+        }
+
+        return $targets;
+    }
+
+    /**
      * Absolute path to the Composer vendor directory.
      */
     public function vendorDir(): string

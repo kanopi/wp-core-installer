@@ -310,6 +310,7 @@ class GitignoreManager
             'mu-plugins' => 'Composer-managed WordPress must-use plugins',
             'dropins'    => 'Composer-managed WordPress drop-ins',
             'languages'  => 'Composer-managed WordPress language packs',
+            'copied'     => 'Composer-managed files copied into shared folders (copy-to)',
         ];
 
         foreach ($headings as $typeKey => $heading) {
@@ -325,8 +326,10 @@ class GitignoreManager
             $lines[] = '# ' . $heading;
 
             foreach ($paths as $path) {
-                // Paths are relative, no leading slash; trailing slash marks dirs.
-                $lines[] = '/' . rtrim(str_replace('\\', '/', $path), '/') . '/';
+                $path = str_replace('\\', '/', $path);
+                // Package install paths are always directories; copy-to
+                // entries carry their own trailing slash only when they are.
+                $lines[] = $typeKey === 'copied' ? '/' . ltrim($path, '/') : '/' . rtrim($path, '/') . '/';
             }
         }
 
