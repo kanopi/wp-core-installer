@@ -96,12 +96,12 @@ setup() {
   [ -f "$autoloader" ]
 
   # No stray "/./" segment and no over-climbing "../../../" in the require path.
-  ! grep -q '/\./' "$autoloader"
-  ! grep -q '\.\./\.\./\.\.' "$autoloader"
+  ! grep -q '/\./' "$autoloader" || false
+  ! grep -q '\.\./\.\./\.\.' "$autoloader" || false
 
   # .gitignore must not gain the malformed duplicate "/./..." line.
   [ -f "${PROJ}/.gitignore" ]
-  ! grep -q '/\./' "${PROJ}/.gitignore"
+  ! grep -q '/\./' "${PROJ}/.gitignore" || false
 }
 
 # Scenario 6 — regression for the stripBlock preg_replace crash.
@@ -126,7 +126,7 @@ setup() {
 
   [ -f "${PROJ}/web/wp-admin/index.php" ]
   [ ! -d "${PROJ}/vendor/.wordpress-core-staging/fake/wordpress-core" ]
-  ! grep -q 'wp-core-installer:core:begin' "${PROJ}/.gitignore"
+  ! grep -q 'wp-core-installer:core:begin' "${PROJ}/.gitignore" || false
   grep -q 'wp-core-installer:packages:begin' "${PROJ}/.gitignore"
 }
 

@@ -40,7 +40,7 @@ bundle() {
   grep -qx '/web/wp-content/themes/twentytwentyfive/' <<<"$block"
   grep -qx '/web/wp-content/plugins/akismet/'         <<<"$block"
   grep -qx '/web/wp-content/plugins/hello.php'        <<<"$block"
-  ! grep -q 'style.css' <<<"$block"
+  ! grep -q 'style.css' <<<"$block" || false
 }
 
 @test "dropping an item from the list removes what was deployed, but not the project's own files" {
@@ -56,7 +56,7 @@ bundle() {
   [ ! -e "${PROJ}/web/wp-content/themes/twentytwentyfive/style.css" ]
   [ -f "${PROJ}/web/wp-content/themes/twentytwentyfive/custom.css" ]
   [ -f "${PROJ}/web/wp-content/plugins/akismet/akismet.php" ]
-  ! grep -q 'twentytwentyfive' "${PROJ}/.gitignore"
+  ! grep -q 'twentytwentyfive' "${PROJ}/.gitignore" || false
 }
 
 @test "the project's own protected-paths win over deploy-bundled" {
@@ -73,5 +73,5 @@ bundle() {
 
   run install_core
   [ "$status" -ne 0 ]
-  [[ "$output" == *"must be a single theme or plugin name"* ]]
+  [[ "$output" == *"must be a single theme or plugin name"* ]] || false
 }

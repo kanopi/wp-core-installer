@@ -30,7 +30,7 @@ setup() {
   run composer_in_project install
   [ "$status" -eq 0 ]
 
-  ! grep -q 'kanopi/wp-core-installer' "${PROJ}/.gitignore"
+  ! grep -q 'kanopi/wp-core-installer' "${PROJ}/.gitignore" || false
   grep -qx '/my-own-rule' "${PROJ}/.gitignore"
 }
 
@@ -40,7 +40,7 @@ setup() {
   run install_core
   [ "$status" -eq 0 ]
 
-  ! grep -q 'wp-core-installer:core:begin' "${PROJ}/.gitignore"
+  ! grep -q 'wp-core-installer:core:begin' "${PROJ}/.gitignore" || false
   grep -q 'wp-core-installer:packages:begin' "${PROJ}/.gitignore"
   grep -qx '/vendor/' "${PROJ}/.gitignore"
 }
@@ -55,9 +55,9 @@ setup() {
   [ "$status" -eq 0 ]
 
   block="$(sed -n '/core:begin/,/core:end/p' "${PROJ}/.gitignore")"
-  ! grep -q 'htaccess'             <<<"$block"
-  ! grep -q 'wp-config-sample.php' <<<"$block"
-  ! grep -q 'index.php'            <<<"$block"
+  ! grep -q 'htaccess'             <<<"$block" || false
+  ! grep -q 'wp-config-sample.php' <<<"$block" || false
+  ! grep -q 'index.php'            <<<"$block" || false
 
   grep -qx '/web/wp-admin/'    <<<"$block"
   grep -qx '/web/wp-includes/' <<<"$block"
@@ -96,5 +96,5 @@ setup() {
   # No installer handles wordpress-language here, so it lands in vendor/,
   # which is already ignored — it must not get its own line.
   [ -d "${PROJ}/vendor/fixture/lang-a" ]
-  ! grep -q 'lang-a' <<<"$block"
+  ! grep -q 'lang-a' <<<"$block" || false
 }

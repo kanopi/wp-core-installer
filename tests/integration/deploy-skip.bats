@@ -15,7 +15,7 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
   [ "$status" -eq 0 ]
 
   [ "$(grep -c 'Deploying fake/wordpress-core' <<<"$output")" -eq 1 ]
-  ! grep -q 'Ensuring fake/wordpress-core' <<<"$output"
+  ! grep -q 'Ensuring fake/wordpress-core' <<<"$output" || false
 }
 
 @test "an unchanged composer install skips the copy and leaves files untouched" {
@@ -27,7 +27,7 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
   run composer_in_project install
   [ "$status" -eq 0 ]
 
-  [[ "$output" == *"up to date in the web-root; skipping deploy"* ]]
+  [[ "$output" == *"up to date in the web-root; skipping deploy"* ]] || false
   [ "$(mtime "${PROJ}/web/wp-load.php")" = "$before" ]
   grep -qx '/web/wp-admin/' "${PROJ}/.gitignore"
 }
@@ -40,7 +40,7 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
   run composer_in_project install
   [ "$status" -eq 0 ]
 
-  [[ "$output" == *"Ensuring fake/wordpress-core is deployed"* ]]
+  [[ "$output" == *"Ensuring fake/wordpress-core is deployed"* ]] || false
   [ -f "${PROJ}/web/wp-admin/index.php" ]
 }
 
@@ -52,7 +52,7 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
   run composer_in_project install
   [ "$status" -eq 0 ]
 
-  [[ "$output" == *"Ensuring fake/wordpress-core is deployed"* ]]
+  [[ "$output" == *"Ensuring fake/wordpress-core is deployed"* ]] || false
 }
 
 @test "toggling manage-gitignore takes effect even when the deploy is skipped" {
@@ -63,6 +63,6 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
   run composer_in_project install
   [ "$status" -eq 0 ]
 
-  [[ "$output" == *"skipping deploy"* ]]
-  ! grep -q 'wp-core-installer:core:begin' "${PROJ}/.gitignore"
+  [[ "$output" == *"skipping deploy"* ]] || false
+  ! grep -q 'wp-core-installer:core:begin' "${PROJ}/.gitignore" || false
 }

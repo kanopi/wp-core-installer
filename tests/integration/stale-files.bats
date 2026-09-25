@@ -21,7 +21,7 @@ setup() {
 
   [ ! -e "${PROJ}/web/wp-includes/legacy" ]
   [ -f "${PROJ}/web/wp-includes/version.php" ]
-  [[ "$output" == *"Removed 1 stale file(s)"* ]]
+  [[ "$output" == *"Removed 1 stale file(s)"* ]] || false
 }
 
 @test "files the project added inside core dirs are never deleted" {

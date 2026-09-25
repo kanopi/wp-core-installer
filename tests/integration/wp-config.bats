@@ -42,32 +42,32 @@ PHP
   enable
   run install_core
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Created web/wp-config.php"* ]]
+  [[ "$output" == *"Created web/wp-config.php"* ]] || false
   php -l "$CFG"
 
   run_config DB_NAME=site DB_HOST=db AUTH_KEY=k1 NONCE_SALT=s8 WP_TABLE_PREFIX=kp_ WP_DEBUG=true WP_ENVIRONMENT_TYPE=staging
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"DB_NAME":"site"'* ]]
-  [[ "$output" == *'"DB_HOST":"db"'* ]]
-  [[ "$output" == *'"prefix":"kp_"'* ]]
-  [[ "$output" == *'"WP_DEBUG":true'* ]]
-  [[ "$output" == *'"AUTH_KEY":"k1"'* ]]
-  [[ "$output" == *'"NONCE_SALT":"s8"'* ]]
-  [[ "$output" == *'"env_type":"staging"'* ]]
+  [[ "$output" == *'"DB_NAME":"site"'* ]] || false
+  [[ "$output" == *'"DB_HOST":"db"'* ]] || false
+  [[ "$output" == *'"prefix":"kp_"'* ]] || false
+  [[ "$output" == *'"WP_DEBUG":true'* ]] || false
+  [[ "$output" == *'"AUTH_KEY":"k1"'* ]] || false
+  [[ "$output" == *'"NONCE_SALT":"s8"'* ]] || false
+  [[ "$output" == *'"env_type":"staging"'* ]] || false
 }
 
 @test "no secrets are written and unset salts stay undefined" {
   enable
   run install_core
   [ "$status" -eq 0 ]
-  ! grep -qE "define\('AUTH_KEY', *'" "$CFG"
+  ! grep -qE "define\('AUTH_KEY', *'" "$CFG" || false
 
   run_config DB_NAME=site
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"AUTH_KEY":null'* ]]
-  [[ "$output" == *'"DB_HOST":"localhost"'* ]]
-  [[ "$output" == *'"prefix":"wp_"'* ]]
-  [[ "$output" == *'"WP_DEBUG":false'* ]]
+  [[ "$output" == *'"AUTH_KEY":null'* ]] || false
+  [[ "$output" == *'"DB_HOST":"localhost"'* ]] || false
+  [[ "$output" == *'"prefix":"wp_"'* ]] || false
+  [[ "$output" == *'"WP_DEBUG":false'* ]] || false
 }
 
 @test "an existing wp-config.php is never overwritten" {
@@ -87,7 +87,7 @@ PHP
   run install_core
   [ "$status" -eq 0 ]
   [ ! -e "$CFG" ]
-  [[ "$output" == *"WordPress already loads"* ]]
+  [[ "$output" == *"WordPress already loads"* ]] || false
 }
 
 @test "a custom template gets its placeholders filled in" {
@@ -106,7 +106,7 @@ PHP
 
   run install_core
   [ "$status" -ne 0 ]
-  [[ "$output" == *"wp-config template not found"* ]]
+  [[ "$output" == *"wp-config template not found"* ]] || false
 }
 
 @test "a .env file is loaded when vlucas/phpdotenv is installed" {
@@ -139,5 +139,5 @@ PHP
 
   run_config
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"DB_NAME":"from_dotenv"'* ]]
+  [[ "$output" == *'"DB_NAME":"from_dotenv"'* ]] || false
 }

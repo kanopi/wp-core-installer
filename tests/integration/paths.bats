@@ -53,7 +53,7 @@ assert_mu_plugin_in() {
 
     [ -f "${PROJ}/public/wp-load.php" ]
     grep -qx '/public/wp-admin/' "${PROJ}/.gitignore"
-    ! grep -q '/\./\|//' "${PROJ}/.gitignore"
+    ! grep -q '/\./\|//' "${PROJ}/.gitignore" || false
   done
 }
 
@@ -66,8 +66,8 @@ assert_mu_plugin_in() {
   [ -f "${WORK}/external-web/wp-load.php" ]
   assert_mu_plugin_in "${WORK}/external-web"
   # Nothing outside the project may leak into the project's .gitignore.
-  ! grep -q '^//' "${PROJ}/.gitignore"
-  ! grep -q 'external-web' "${PROJ}/.gitignore"
+  ! grep -q '^//' "${PROJ}/.gitignore" || false
+  ! grep -q 'external-web' "${PROJ}/.gitignore" || false
   grep -qx '/vendor/' "${PROJ}/.gitignore"
 }
 
