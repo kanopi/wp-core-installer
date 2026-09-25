@@ -4,6 +4,16 @@
 # (a fake "wordpress-core" package + this plugin). Everything is offline:
 # path repositories + packagist disabled, so no network access is needed.
 
+# Convert a bash path to one native PHP/Composer understands. On Windows
+# (Git Bash) "/d/a/repo" becomes "D:/a/repo"; elsewhere it is unchanged.
+native_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 # Resolve the plugin repo root (three dirs up: tests/integration/ -> repo).
 _repo_root() {
   cd "${BATS_TEST_DIRNAME}/../.." && pwd
@@ -13,6 +23,8 @@ _repo_root() {
 # Sets the globals: WORK, CORE, PROJ.
 setup_project() {
   REPO_ROOT="$(_repo_root)"
+  local repo_native
+  repo_native="$(native_path "${REPO_ROOT}")"
   COMPOSER="${COMPOSER_BIN:-composer}"
   export COMPOSER_NO_INTERACTION=1
 
@@ -48,8 +60,8 @@ EOF
     "repositories": {
         "packagist.org": false,
         "core":   { "type": "path", "url": "../fake-core", "options": { "symlink": false } },
-        "plugin": { "type": "path", "url": "${REPO_ROOT}",  "options": { "symlink": false } },
-        "installers": { "type": "path", "url": "${REPO_ROOT}/vendor/composer/installers", "options": { "symlink": false, "versions": { "composer/installers": "2.99.0" } } },
+        "plugin": { "type": "path", "url": "${repo_native}",  "options": { "symlink": false } },
+        "installers": { "type": "path", "url": "${repo_native}/vendor/composer/installers", "options": { "symlink": false, "versions": { "composer/installers": "2.99.0" } } },
         "fixtures": { "type": "path", "url": "../fixtures/*", "options": { "symlink": false } }
     },
     "require": {},
@@ -59,9 +71,11 @@ EOF
 EOF
 }
 
-# Run composer inside the throwaway project.
+# Run composer inside the throwaway project. A very wide COLUMNS stops
+# Symfony Console wrapping error messages mid-word (terminal widths differ
+# between CI images), so tests can match message text reliably.
 composer_in_project() {
-  ( cd "${PROJ}" && "${COMPOSER}" "$@" )
+  ( cd "${PROJ}" && COLUMNS=1000 "${COMPOSER}" "$@" )
 }
 
 # Override extra.wordpress-install-dir in the project's composer.json.
@@ -109,4 +123,18 @@ update_core_to() {
   sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$1\"/" "${CORE}/composer.json"
   rm -f "${CORE}/composer.json.bak"
   composer_in_project update fake/wordpress-core
+}
+
+# Write a WordPress.org-style checksums file ({"checksums": {path: md5}})
+# for every file in the fake core package, to $1.
+write_core_checksums() {
+  php -r '
+    $base = $argv[1]; $out = [];
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS | FilesystemIterator::UNIX_PATHS));
+    foreach ($it as $f) {
+      $rel = substr(str_replace("\\", "/", $f->getPathname()), strlen($base) + 1);
+      if ($rel !== "composer.json") { $out[$rel] = md5_file($f->getPathname()); }
+    }
+    file_put_contents($argv[2], json_encode(["checksums" => $out]));
+  ' "$(native_path "${CORE}")" "$1"
 }

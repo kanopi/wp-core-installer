@@ -7,6 +7,8 @@ namespace Kanopi\Composer\WordPress;
 use Composer\Composer;
 use Composer\EventDispatcher\EventSubscriberInterface;
 use Composer\IO\IOInterface;
+use Composer\Plugin\Capability\CommandProvider as CommandProviderCapability;
+use Composer\Plugin\Capable;
 use Composer\Plugin\PluginInterface;
 use Composer\Script\Event;
 use Composer\Script\ScriptEvents;
@@ -20,8 +22,9 @@ use Composer\Script\ScriptEvents;
  *   2. Subscribes to post-install-cmd / post-update-cmd so that every
  *      Composer-managed plugin and theme (installed by composer/installers)
  *      is tracked in .gitignore after the full dependency tree is resolved.
+ *   3. Provides the wp-core:deploy, wp-core:status and wp-core:verify commands.
  */
-class Plugin implements PluginInterface, EventSubscriberInterface
+class Plugin implements PluginInterface, EventSubscriberInterface, Capable
 {
     private Composer $composer;
     private IOInterface $io;
@@ -51,6 +54,15 @@ class Plugin implements PluginInterface, EventSubscriberInterface
     }
 
     // -------------------------------------------------------------------------
+    // Capable
+    // -------------------------------------------------------------------------
+
+    public function getCapabilities(): array
+    {
+        return [CommandProviderCapability::class => Command\CommandProvider::class];
+    }
+
+    // -------------------------------------------------------------------------
     // EventSubscriberInterface
     // -------------------------------------------------------------------------
 
@@ -64,20 +76,25 @@ class Plugin implements PluginInterface, EventSubscriberInterface
 
     /**
      * After all packages have been installed / updated:
-     *   1. Scaffold the Composer autoloader mu-plugin (skip-if-exists).
-     *   2. Refresh the .gitignore block for all Composer-managed WP packages.
+     *   0. Make sure core is deployed.
+     *   1. Create a starter wp-config.php when opted in and none exists.
+     *   2. Scaffold the Composer autoloader mu-plugin.
+     *   3. Refresh the .gitignore block for all Composer-managed WP packages.
      */
     public function onPostInstallOrUpdate(Event $event): void
     {
         // ── 0. Ensure core is deployed (handles vendor-cache scenario) ───────
         $this->coreInstaller->ensureCoreDeployed();
 
-        // ── 1. Autoloader mu-plugin ───────────────────────────────────────────
+        // ── 1. Starter wp-config.php (opt-in, first install only) ─────────────
+        (new WpConfigScaffolder($this->composer, $this->io))->scaffold();
+
+        // ── 2. Autoloader mu-plugin ───────────────────────────────────────────
         $this->io->write('<info>WP Core Installer:</info> Checking Composer autoloader mu-plugin…');
 
         (new MuPluginScaffolder($this->composer, $this->io))->scaffold();
 
-        // ── 2. .gitignore packages block ──────────────────────────────────────
+        // ── 3. .gitignore packages block ──────────────────────────────────────
         $this->io->write('<info>WP Core Installer:</info> Refreshing .gitignore for Composer-managed packages…');
 
         (new PackageGitignoreHandler(
