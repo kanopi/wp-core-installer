@@ -15,8 +15,8 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
 @test "wp-core:status reports in sync and exits 0" {
   run composer_in_project wp-core:status
   [ "$status" -eq 0 ]
-  [[ "$output" == *"In sync"* ]]
-  [[ "$output" == *"fake/wordpress-core 6.8.3"* ]]
+  [[ "$output" == *"In sync"* ]] || false
+  [[ "$output" == *"fake/wordpress-core 6.8.3"* ]] || false
 }
 
 @test "wp-core:status reports drift and exits 1" {
@@ -25,10 +25,10 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
 
   run composer_in_project wp-core:status -v
   [ "$status" -eq 1 ]
-  [[ "$output" == *"Out of sync"* ]]
-  [[ "$output" == *"1 to create, 1 to update"* ]]
-  [[ "$output" == *"wp-includes/version.php"* ]]
-  [[ "$output" == *"wp-admin/index.php"* ]]
+  [[ "$output" == *"Out of sync"* ]] || false
+  [[ "$output" == *"1 to create, 1 to update"* ]] || false
+  [[ "$output" == *"wp-includes/version.php"* ]] || false
+  [[ "$output" == *"wp-admin/index.php"* ]] || false
 }
 
 @test "wp-core:deploy --dry-run reports changes without writing" {
@@ -36,7 +36,7 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
 
   run composer_in_project wp-core:deploy --dry-run
   [ "$status" -eq 0 ]
-  [[ "$output" == *"would change: 1 to update"* ]]
+  [[ "$output" == *"would change: 1 to update"* ]] || false
   [ "$(cat "${PROJ}/web/wp-includes/version.php")" = "<?php // hacked" ]
 }
 
@@ -47,7 +47,7 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
 
   run composer_in_project wp-core:deploy
   [ "$status" -eq 0 ]
-  [[ "$output" == *"1 updated"* ]]
+  [[ "$output" == *"1 updated"* ]] || false
   [ "$(cat "${PROJ}/web/wp-includes/version.php")" = "<?php // includes" ]
   [ "$(mtime "${PROJ}/web/wp-load.php")" = "$before" ]
 
@@ -69,7 +69,7 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
 
   run composer_in_project wp-core:verify --checksums-file="$(native_path "${WORK}")/checksums.json"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Success:"* ]]
+  [[ "$output" == *"Success:"* ]] || false
 }
 
 @test "wp-core:verify fails on modified or missing files, warns on unexpected ones" {
@@ -80,9 +80,9 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
 
   run composer_in_project wp-core:verify --checksums-file="$(native_path "${WORK}")/checksums.json"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"modified   wp-includes/version.php"* ]]
-  [[ "$output" == *"missing    wp-admin/index.php"* ]]
-  [[ "$output" == *"unexpected wp-includes/backdoor.php"* ]]
+  [[ "$output" == *"modified   wp-includes/version.php"* ]] || false
+  [[ "$output" == *"missing    wp-admin/index.php"* ]] || false
+  [[ "$output" == *"unexpected wp-includes/backdoor.php"* ]] || false
 }
 
 @test "wp-core:verify ignores skip-if-exists and protected files" {
@@ -91,8 +91,8 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
 
   run composer_in_project wp-core:verify --checksums-file="$(native_path "${WORK}")/checksums.json"
   [ "$status" -eq 0 ]
-  [[ "$output" != *"wp-config-sample.php"* ]]
-  [[ "$output" != *"twentytwentyfive"* ]]
+  [[ "$output" != *"wp-config-sample.php"* ]] || false
+  [[ "$output" != *"twentytwentyfive"* ]] || false
 }
 
 @test "commands fail clearly when no core package is installed" {
@@ -101,5 +101,5 @@ mtime() { php -r 'clearstatcache(); echo filemtime($argv[1]);' "$1"; }
 
   run composer_in_project wp-core:status
   [ "$status" -eq 1 ]
-  [[ "$output" == *"No wordpress-core package is installed"* ]]
+  [[ "$output" == *"No wordpress-core package is installed"* ]] || false
 }

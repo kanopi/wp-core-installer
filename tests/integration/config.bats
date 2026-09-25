@@ -19,7 +19,7 @@ setup() {
   [ ! -e "${PROJ}/web/config" ]
   [ ! -e "${PROJ}/web/wp-load.php" ]
   [ -f "${PROJ}/web/wp-admin/index.php" ]
-  ! grep -q '/web/wp-load.php' "${PROJ}/.gitignore"
+  ! grep -q '/web/wp-load.php' "${PROJ}/.gitignore" || false
 }
 
 @test "custom skip-if-exists files are copied once and never overwritten" {
@@ -36,7 +36,7 @@ setup() {
   [ "$status" -eq 0 ]
 
   [ "$(cat "${PROJ}/web/robots.txt")" = "my robots" ]
-  ! grep -q 'robots.txt' "${PROJ}/.gitignore"
+  ! grep -q 'robots.txt' "${PROJ}/.gitignore" || false
 }
 
 @test "vendor-dir inside mu-plugins: autoloader and .gitignore follow it" {
@@ -60,6 +60,6 @@ setup() {
   run install_core
   [ "$status" -ne 0 ]
   # Composer's console wraps long messages, so match the pieces.
-  [[ "$output" == *"extra.wp-core-installer.protected-paths"* ]]
-  [[ "$output" == *"must be an array of strings"* ]]
+  [[ "$output" == *"extra.wp-core-installer.protected-paths"* ]] || false
+  [[ "$output" == *"must be an array of strings"* ]] || false
 }
