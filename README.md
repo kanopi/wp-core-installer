@@ -239,30 +239,13 @@ site and pushes it.
 ### Kinsta
 
 Kinsta serves the `public/` directory of the site (`/www/<site>_<id>/public/`).
-The Kinsta MU plugin is required, because it provides the cache purge used
-after each deploy. It isn't on a Composer repository, so declare it inline.
 
 ```json
 {
-    "repositories": {
-        "kinsta": {
-            "type": "package",
-            "package": {
-                "name": "kinsta/kinsta-mu-plugins",
-                "type": "wordpress-muplugin",
-                "version": "3.5.1",
-                "dist": {
-                    "type": "zip",
-                    "url": "https://kinsta.com/kinsta-tools/kinsta-mu-plugins.zip"
-                }
-            }
-        }
-    },
     "require": {
         "composer/installers": "^2.0",
         "kanopi/wp-core-installer": "^1.3",
-        "kanopi/wordpress-core": "^6.8",
-        "kinsta/kinsta-mu-plugins": "^3.5"
+        "kanopi/wordpress-core": "^6.8"
     },
     "config": {
         "vendor-dir": "public/wp-content/mu-plugins/vendor",
@@ -274,7 +257,6 @@ after each deploy. It isn't on a Composer repository, so declare it inline.
     "extra": {
         "wordpress-install-dir": "public",
         "installer-paths": {
-            "public/wp-content/mu-plugins/":         ["kinsta/kinsta-mu-plugins"],
             "public/wp-content/plugins/{$name}/":    ["type:wordpress-plugin"],
             "public/wp-content/themes/{$name}/":     ["type:wordpress-theme"],
             "public/wp-content/mu-plugins/{$name}/": ["type:wordpress-muplugin"]
@@ -283,23 +265,41 @@ after each deploy. It isn't on a Composer repository, so declare it inline.
 }
 ```
 
-- **Kinsta MU plugin location:** it ships its own loader, so it installs
-  straight into `mu-plugins/`. The package-specific `installer-paths` entry
-  must come **before** the generic `type:wordpress-muplugin` one.
-- **Upgrading the Kinsta MU plugin:** the zip URL always serves the latest
-  version, so Composer locks against the inline `version`. Bump that string
-  when you want a newer copy, then run
-  `composer update kinsta/kinsta-mu-plugins`.
+- **Commit the Kinsta MU plugin; don't install it with Composer.** It's
+  required, because it provides the cache purge used after each deploy. It
+  has to sit directly in `mu-plugins/` (`kinsta-mu-plugins.php` plus a
+  `kinsta-mu-plugins/` folder), and Composer can't safely install a package
+  into a folder other files share (see the warning below). Download it from
+  `https://kinsta.com/kinsta-tools/kinsta-mu-plugins.zip`, unzip it into
+  `public/wp-content/mu-plugins/`, and commit both entries. To upgrade,
+  repeat that and commit the change. A safe Composer-managed option is
+  planned (#46).
 - **Deploy:** CI runs `composer install --no-dev`, rsyncs `public/*` to the
   site's `public/` directory, then purges the cache over SSH:
   `cd /www/<site>_<id>/public && wp kinsta cache purge --all`. The deploy
   isn't finished until the purge runs, or visitors keep getting stale pages.
-- **Known issue:** because the Kinsta MU plugin installs into the mu-plugins
-  root, the packages `.gitignore` block currently ignores the whole
-  `public/wp-content/mu-plugins/` directory, including your own mu-plugins
-  (#46). Until that's fixed, commit your own mu-plugins with `git add -f`.
-  Files git already tracks stay tracked. A `!` exception won't help, because
-  git can't re-include files inside a directory that's already ignored.
+
+### Don't install packages into a shared folder
+
+Never point an `installer-paths` entry at a folder that other files also live
+in. That means `wp-content/`, `wp-content/plugins/`, `wp-content/themes/` or
+`wp-content/mu-plugins/` itself, as opposed to a `{$name}` subfolder inside
+them.
+
+Composer treats a package's install folder as belonging entirely to that
+package:
+
+- **Updating or removing the package deletes the whole folder**, and then
+  reinstalls the package if it's an update. For `mu-plugins/`, that deletes
+  every mu-plugin you own, the autoloader mu-plugin, and `vendor/` too when
+  `vendor-dir` sits inside it. The update then fails with "corrupted zip
+  archive", because the download it just made was deleted along with
+  `vendor/`.
+- **Installing empties the folder first**, unless `vendor-dir` is inside it.
+
+Packages that must sit directly in a shared folder, like the Kinsta MU
+plugin, should be committed to the repository until #46 adds a safe way to
+manage them.
 
 ---
 
