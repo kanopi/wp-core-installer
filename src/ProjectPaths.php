@@ -79,6 +79,26 @@ class ProjectPaths
     }
 
     /**
+     * Web-root folders that hold more than one package's (or the project's)
+     * files. A package must never be *installed* into one of these: Composer
+     * deletes a package's whole install folder when it updates or removes it.
+     *
+     * @return string[] Absolute paths.
+     */
+    public function sharedDirs(): array
+    {
+        $webRoot = $this->webRoot();
+
+        return array_values(array_unique([
+            $this->resolve($webRoot, 'wp-content'),
+            $this->resolve($webRoot, 'wp-content/plugins'),
+            $this->resolve($webRoot, 'wp-content/themes'),
+            $this->resolve($webRoot, 'wp-content/mu-plugins'),
+            $this->muPluginsDir(),
+        ]));
+    }
+
+    /**
      * Absolute path to the Composer vendor directory.
      */
     public function vendorDir(): string

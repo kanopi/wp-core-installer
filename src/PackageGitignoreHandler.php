@@ -77,7 +77,7 @@ class PackageGitignoreHandler
         // `composer install` has run in a fresh checkout.
         $muPluginFile = (new MuPluginScaffolder($this->composer, $this->io))->resolveOutputPath();
 
-        $byType = $this->resolvePackagePaths($projectRoot, $vendorDirAbs);
+        $byType = $this->resolvePackagePaths($projectRoot, $vendorDirAbs, $paths->sharedDirs());
 
         $this->gitignoreManager->updatePackagesBlock($projectRoot, $vendorDirAbs, $byType, $muPluginFile);
     }
@@ -90,9 +90,10 @@ class PackageGitignoreHandler
      * Iterate every locally installed package, filter to WordPress content
      * types, and return their install paths grouped by section label.
      *
+     * @param string[] $sharedDirs Absolute paths of shared WordPress folders (never gitignored wholesale).
      * @return array<string, string[]>  e.g. ['plugins' => ['wp-content/plugins/akismet'], ...]
      */
-    private function resolvePackagePaths(string $projectRoot, string $vendorDirAbs): array
+    private function resolvePackagePaths(string $projectRoot, string $vendorDirAbs, array $sharedDirs): array
     {
         $installManager = $this->composer->getInstallationManager();
         $localRepo      = $this->composer->getRepositoryManager()->getLocalRepository();
@@ -124,6 +125,31 @@ class PackageGitignoreHandler
             // Resolve symlinks / relative segments so the comparison is reliable.
             $resolved = realpath($installPathAbs) ?: $installPathAbs;
             $relative = $this->gitignoreManager->relativeToProject($projectRoot, $resolved);
+
+            // Installed straight into a folder other files share (#46).
+            // Ignoring the folder would hide the project's own files from git,
+            // so only the package's own entries are ignored, and the user is
+            // warned that Composer deletes the whole folder on update/removal.
+            $sharedDir = rtrim(str_replace('\\', '/', $resolved), '/');
+            if (in_array($sharedDir, $sharedDirs, true)) {
+                $own = (new SharedInstallTracker($this->composer))->entriesFor($package, $sharedDir);
+
+                foreach ($own as $name => $isDir) {
+                    $byType['shared'][] = $relative . '/' . $name . ($isDir ? '/' : '');
+                }
+
+                $this->io->writeError(sprintf(
+                    "  - <warning>%s is installed directly into %s, which other files share.</warning>\n"
+                    . "    Composer deletes that whole folder whenever %s is updated or removed.\n"
+                    . "    Commit the package's files instead, or install it elsewhere and copy the files\n"
+                    . "    into place (e.g. with kanopi/composer-assets). Gitignoring only its own files: %s.",
+                    $package->getPrettyName(),
+                    $relative,
+                    $package->getPrettyName(),
+                    $own === [] ? 'none found' : implode(', ', array_keys($own))
+                ));
+                continue;
+            }
 
             if ($relative === $resolved) {
                 // relativeToProject returns the input unchanged when the path

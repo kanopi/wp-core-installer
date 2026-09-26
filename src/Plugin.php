@@ -6,6 +6,8 @@ namespace Kanopi\Composer\WordPress;
 
 use Composer\Composer;
 use Composer\EventDispatcher\EventSubscriberInterface;
+use Composer\Installer\PackageEvent;
+use Composer\Installer\PackageEvents;
 use Composer\IO\IOInterface;
 use Composer\Plugin\Capability\CommandProvider as CommandProviderCapability;
 use Composer\Plugin\Capable;
@@ -29,6 +31,7 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
     private Composer $composer;
     private IOInterface $io;
     private CoreInstaller $coreInstaller;
+    private SharedInstallTracker $sharedInstalls;
 
     // -------------------------------------------------------------------------
     // PluginInterface
@@ -39,7 +42,8 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
         $this->composer = $composer;
         $this->io       = $io;
 
-        $this->coreInstaller = new CoreInstaller($io, $composer);
+        $this->coreInstaller  = new CoreInstaller($io, $composer);
+        $this->sharedInstalls = new SharedInstallTracker($composer);
         $composer->getInstallationManager()->addInstaller($this->coreInstaller);
     }
 
@@ -71,7 +75,28 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
         return [
             ScriptEvents::POST_INSTALL_CMD => ['onPostInstallOrUpdate', 0],
             ScriptEvents::POST_UPDATE_CMD  => ['onPostInstallOrUpdate', 0],
+            // Track what packages installed into shared folders add (#46).
+            PackageEvents::PRE_PACKAGE_INSTALL    => ['beforePackageInstall', 0],
+            PackageEvents::PRE_PACKAGE_UPDATE     => ['beforePackageInstall', 0],
+            PackageEvents::POST_PACKAGE_INSTALL   => ['afterPackageInstall', 0],
+            PackageEvents::POST_PACKAGE_UPDATE    => ['afterPackageInstall', 0],
+            PackageEvents::POST_PACKAGE_UNINSTALL => ['afterPackageUninstall', 0],
         ];
+    }
+
+    public function beforePackageInstall(PackageEvent $event): void
+    {
+        $this->sharedInstalls->beforeInstall($event);
+    }
+
+    public function afterPackageInstall(PackageEvent $event): void
+    {
+        $this->sharedInstalls->afterInstall($event);
+    }
+
+    public function afterPackageUninstall(PackageEvent $event): void
+    {
+        $this->sharedInstalls->afterUninstall($event);
     }
 
     /**
