@@ -101,8 +101,9 @@ setup() {
 
 # Regression for #46: a package installed straight into a shared folder must
 # not get that whole folder gitignored (it would hide the project's own
-# files), and the user is warned that Composer deletes the folder on update.
-@test "a package installed into the mu-plugins root warns and does not gitignore the folder" {
+# files) — only the package's own entries — and the user is warned that
+# Composer deletes the folder on update.
+@test "a package installed into the mu-plugins root gitignores only its own files" {
   # Served as a zip (artifact repo), like real packages: Composer's path
   # downloader would delete the whole mu-plugins folder, vendor/ included.
   mkdir -p "${WORK}/artifacts"
@@ -111,7 +112,9 @@ setup() {
     $zip->open($argv[1] . "/mu-root-1.0.0.zip", ZipArchive::CREATE | ZipArchive::OVERWRITE);
     $zip->addFromString("composer.json", json_encode(["name" => "fixture/mu-root", "version" => "1.0.0",
         "type" => "wordpress-muplugin", "require" => ["composer/installers" => "*"]]));
-    $zip->addFromString("mu-root.php", "<?php // mu-root\n");
+    $zip->addFromString("mu-root.php", "<?php // loader\n");
+    $zip->addFromString("mu-root/lib.php", "<?php // lib\n");
+    $zip->addFromString("helper.php", "<?php // not named after the package\n");
     $zip->close();
   ' "$(native_path "${WORK}/artifacts")"
   make_wp_package fixture/mu-owned wordpress-muplugin
@@ -129,20 +132,38 @@ setup() {
     $j->repositories->artifacts = (object) ["type" => "artifact", "url" => $argv[2]];
     file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
   ' "${PROJ}/composer.json" "$(native_path "${WORK}/artifacts")"
-  mkdir -p "${PROJ}/web/wp-content/mu-plugins"
-  printf '<?php // mine\n' > "${PROJ}/web/wp-content/mu-plugins/my-plugin.php"
+  MU="${PROJ}/web/wp-content/mu-plugins"
+  mkdir -p "$MU"
+  printf '<?php // mine\n' > "${MU}/my-plugin.php"
 
   run composer_in_project require "kanopi/wp-core-installer:*" "fake/wordpress-core:*" "fixture/mu-root:*" "fixture/mu-owned:*"
   [ "$status" -eq 0 ]
 
   [[ "$output" == *"fixture/mu-root is installed directly into web/wp-content/mu-plugins, which other files share"* ]] || false
+  [[ "$output" == *"Gitignoring only its own files: composer.json, helper.php, mu-root, mu-root.php"* ]] || false
   [[ "$output" == *"kanopi/composer-assets"* ]] || false
 
   block="$(sed -n '/packages:begin/,/packages:end/p' "${PROJ}/.gitignore")"
+  # The package's own entries (recorded at install time), not the folder.
+  grep -qx '/web/wp-content/mu-plugins/mu-root.php' <<<"$block"
+  grep -qx '/web/wp-content/mu-plugins/mu-root/'    <<<"$block"
+  grep -qx '/web/wp-content/mu-plugins/helper.php'  <<<"$block"
+  # (the fixture zip ships a composer.json; Composer extracts it, so it's the package's too)
+  grep -qx '/web/wp-content/mu-plugins/composer.json' <<<"$block"
   ! grep -qx '/web/wp-content/mu-plugins/' <<<"$block" || false
+  ! grep -q 'my-plugin' <<<"$block" || false
   # Everything else is still managed as usual.
   grep -qx '/web/wp-content/mu-plugins/mu-owned/' <<<"$block"
   grep -qx '/web/wp-content/mu-plugins/000-autoloader.php' <<<"$block"
-  [ -f "${PROJ}/web/wp-content/mu-plugins/my-plugin.php" ]
-  [ -f "${PROJ}/web/wp-content/mu-plugins/mu-root.php" ]
+  [ -f "${MU}/my-plugin.php" ]
+
+  # Without the install-time record (e.g. installed by an older version), the
+  # "<name>.php" + "<name>/" convention is used.
+  rm "${MU}/vendor/.wordpress-core-staging/shared-installs.json"
+  run composer_in_project install
+  [ "$status" -eq 0 ]
+  block="$(sed -n '/packages:begin/,/packages:end/p' "${PROJ}/.gitignore")"
+  grep -qx '/web/wp-content/mu-plugins/mu-root.php' <<<"$block"
+  grep -qx '/web/wp-content/mu-plugins/mu-root/'    <<<"$block"
+  ! grep -q 'helper.php' <<<"$block" || false
 }

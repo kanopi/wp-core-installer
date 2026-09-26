@@ -127,19 +127,26 @@ class PackageGitignoreHandler
             $relative = $this->gitignoreManager->relativeToProject($projectRoot, $resolved);
 
             // Installed straight into a folder other files share (#46).
-            // Ignoring it would hide the project's own files from git, and
-            // Composer deletes that whole folder when this package updates
-            // or is removed, so say so instead.
-            if (in_array(rtrim(str_replace('\\', '/', $resolved), '/'), $sharedDirs, true)) {
+            // Ignoring the folder would hide the project's own files from git,
+            // so only the package's own entries are ignored, and the user is
+            // warned that Composer deletes the whole folder on update/removal.
+            $sharedDir = rtrim(str_replace('\\', '/', $resolved), '/');
+            if (in_array($sharedDir, $sharedDirs, true)) {
+                $own = (new SharedInstallTracker($this->composer))->entriesFor($package, $sharedDir);
+
+                foreach ($own as $name => $isDir) {
+                    $byType['shared'][] = $relative . '/' . $name . ($isDir ? '/' : '');
+                }
+
                 $this->io->writeError(sprintf(
                     "  - <warning>%s is installed directly into %s, which other files share.</warning>\n"
                     . "    Composer deletes that whole folder whenever %s is updated or removed.\n"
                     . "    Commit the package's files instead, or install it elsewhere and copy the files\n"
-                    . "    into place (e.g. with kanopi/composer-assets). Not gitignoring %s.",
+                    . "    into place (e.g. with kanopi/composer-assets). Gitignoring only its own files: %s.",
                     $package->getPrettyName(),
                     $relative,
                     $package->getPrettyName(),
-                    $relative
+                    $own === [] ? 'none found' : implode(', ', array_keys($own))
                 ));
                 continue;
             }
