@@ -272,8 +272,7 @@ Kinsta serves the `public/` directory of the site (`/www/<site>_<id>/public/`).
   into a folder other files share (see the warning below). Download it from
   `https://kinsta.com/kinsta-tools/kinsta-mu-plugins.zip`, unzip it into
   `public/wp-content/mu-plugins/`, and commit both entries. To upgrade,
-  repeat that and commit the change. A safe Composer-managed option is
-  planned (#46).
+  repeat that and commit the change.
 - **Deploy:** CI runs `composer install --no-dev`, rsyncs `public/*` to the
   site's `public/` directory, then purges the cache over SSH:
   `cd /www/<site>_<id>/public && wp kinsta cache purge --all`. The deploy
@@ -298,8 +297,13 @@ package:
 - **Installing empties the folder first**, unless `vendor-dir` is inside it.
 
 Packages that must sit directly in a shared folder, like the Kinsta MU
-plugin, should be committed to the repository until #46 adds a safe way to
-manage them.
+plugin, should be committed to the repository. Alternatively, install them
+somewhere of their own and copy their files into place with a tool built for
+that, such as [`kanopi/composer-assets`](https://github.com/kanopi/composer-assets).
+
+If a package *is* installed straight into one of these folders, the plugin
+prints a warning during `composer install` and does not add that folder to the
+packages `.gitignore` block, so your own files in it stay tracked.
 
 ---
 

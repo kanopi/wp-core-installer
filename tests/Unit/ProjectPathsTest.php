@@ -142,6 +142,22 @@ final class ProjectPathsTest extends TestCase
         self::assertFalse($paths->configBool('something-else', false));
     }
 
+    public function testSharedDirs(): void
+    {
+        $paths = new ProjectPaths($this->composer([
+            'wordpress-install-dir' => 'web',
+            'wp-core-installer'     => ['mu-plugins-dir' => 'app/mu-plugins'],
+        ]));
+
+        self::assertSame([
+            $this->root . '/web/wp-content',
+            $this->root . '/web/wp-content/plugins',
+            $this->root . '/web/wp-content/themes',
+            $this->root . '/web/wp-content/mu-plugins',
+            $this->root . '/web/app/mu-plugins',
+        ], $paths->sharedDirs());
+    }
+
     /**
      * @return array<string, array{array<string, mixed>, callable(ProjectPaths): mixed, string}>
      */

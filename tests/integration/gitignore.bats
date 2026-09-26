@@ -98,3 +98,51 @@ setup() {
   [ -d "${PROJ}/vendor/fixture/lang-a" ]
   ! grep -q 'lang-a' <<<"$block"
 }
+
+# Regression for #46: a package installed straight into a shared folder must
+# not get that whole folder gitignored (it would hide the project's own
+# files), and the user is warned that Composer deletes the folder on update.
+@test "a package installed into the mu-plugins root warns and does not gitignore the folder" {
+  # Served as a zip (artifact repo), like real packages: Composer's path
+  # downloader would delete the whole mu-plugins folder, vendor/ included.
+  mkdir -p "${WORK}/artifacts"
+  php -r '
+    $zip = new ZipArchive();
+    $zip->open($argv[1] . "/mu-root-1.0.0.zip", ZipArchive::CREATE | ZipArchive::OVERWRITE);
+    $zip->addFromString("composer.json", json_encode(["name" => "fixture/mu-root", "version" => "1.0.0",
+        "type" => "wordpress-muplugin", "require" => ["composer/installers" => "*"]]));
+    $zip->addFromString("mu-root.php", "<?php // mu-root\n");
+    $zip->close();
+  ' "$(native_path "${WORK}/artifacts")"
+  make_wp_package fixture/mu-owned wordpress-muplugin
+  set_extra '{
+    "wordpress-install-dir": "web",
+    "installer-paths": {
+      "web/wp-content/mu-plugins/":         ["fixture/mu-root"],
+      "web/wp-content/mu-plugins/{$name}/": ["type:wordpress-muplugin"]
+    }
+  }'
+  # vendor-dir inside mu-plugins stops Composer emptying the folder on install.
+  php -r '
+    $f = $argv[1]; $j = json_decode(file_get_contents($f));
+    $j->config->{"vendor-dir"} = "web/wp-content/mu-plugins/vendor";
+    $j->repositories->artifacts = (object) ["type" => "artifact", "url" => $argv[2]];
+    file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+  ' "${PROJ}/composer.json" "$(native_path "${WORK}/artifacts")"
+  mkdir -p "${PROJ}/web/wp-content/mu-plugins"
+  printf '<?php // mine\n' > "${PROJ}/web/wp-content/mu-plugins/my-plugin.php"
+
+  run composer_in_project require "kanopi/wp-core-installer:*" "fake/wordpress-core:*" "fixture/mu-root:*" "fixture/mu-owned:*"
+  [ "$status" -eq 0 ]
+
+  [[ "$output" == *"fixture/mu-root is installed directly into web/wp-content/mu-plugins, which other files share"* ]] || false
+  [[ "$output" == *"kanopi/composer-assets"* ]] || false
+
+  block="$(sed -n '/packages:begin/,/packages:end/p' "${PROJ}/.gitignore")"
+  ! grep -qx '/web/wp-content/mu-plugins/' <<<"$block" || false
+  # Everything else is still managed as usual.
+  grep -qx '/web/wp-content/mu-plugins/mu-owned/' <<<"$block"
+  grep -qx '/web/wp-content/mu-plugins/000-autoloader.php' <<<"$block"
+  [ -f "${PROJ}/web/wp-content/mu-plugins/my-plugin.php" ]
+  [ -f "${PROJ}/web/wp-content/mu-plugins/mu-root.php" ]
+}
